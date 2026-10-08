@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number };
+export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
 export type Msg = {
   role: "user" | "assistant";
   text: string;
   ts: number;
   suggestions?: { title: string; why: string; added?: boolean }[];
+  actions?: Action[];
 };
 export type Item = {
   id: string;
@@ -19,9 +21,9 @@ export type Item = {
   chat: Msg[];
   calendarEventId?: string;
 };
-export type Settings = { apiKey: string; model: string; googleClientId: string };
+export type Settings = { apiKey: string; model: string; calendarUrl: string; calendarKey: string };
 
-export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "claude-opus-5-5", googleClientId: "" };
+export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "claude-opus-5-5", calendarUrl: "", calendarKey: "" };
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 

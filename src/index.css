@@ -32,6 +32,7 @@ button.ghost { background: transparent; color: var(--accent); padding: 6px 4px; 
 button.ghost.danger { color: var(--danger); }
 button.link { background: none; color: var(--muted); padding: 8px 0; font-size: 14px; }
 button.small { padding: 6px 10px; font-size: 13px; }
+.filebtn { display: inline-block; line-height: normal; }
 .filebtn input { display: none; }
 input, textarea, select { font: inherit; font-size: 16px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
 textarea { resize: vertical; min-height: 44px; }
@@ -107,3 +108,24 @@ label.check input { width: auto; }
 .chatview .composer { position: sticky; bottom: 0; margin: 0; padding: 8px 0 calc(10px + env(safe-area-inset-bottom)); background: var(--bg); align-items: flex-end; }
 .chatview .composer textarea { border-radius: 22px; padding: 11px 16px; resize: none; min-height: 46px; max-height: 160px; line-height: 1.4; }
 .send { width: 46px; height: 46px; border-radius: 50%; padding: 0; font-size: 20px; font-weight: 700; flex: 0 0 46px; }
+.homechat { display: flex; flex-direction: column; min-height: calc(100dvh - 100px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+.home-head { margin-bottom: 12px; }
+.now-strip { background: var(--accent-soft); border-radius: 16px; padding: 14px 16px; cursor: pointer; display: grid; gap: 2px; }
+.now-strip strong { font-size: 17px; }
+.now-strip ul { margin: 8px 0 0; padding: 8px 0 0; list-style: none; border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); display: grid; gap: 4px; }
+.now-strip li { font-size: 13px; color: var(--muted); }
+.now-strip li::before { content: "• "; color: var(--warn); }
+.homechat .thread { padding-top: 12px; }
+.homechat .composer { position: sticky; bottom: calc(64px + env(safe-area-inset-bottom)); margin: 0; padding: 8px 0 10px; background: var(--bg); align-items: flex-end; }
+.homechat .composer textarea { border-radius: 22px; padding: 11px 16px; resize: none; min-height: 46px; max-height: 160px; line-height: 1.4; }
+.actions { margin-top: 10px; display: grid; gap: 6px; }
+.act { display: flex; gap: 8px; align-items: baseline; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 14px; line-height: 1.4; }
+.act .grow { cursor: pointer; }
+.act .tick { color: var(--accent); font-weight: 700; }
+.act.undone { opacity: .5; } .act.undone .grow { text-decoration: line-through; cursor: default; }
+.act .link { padding: 0; }
+.calsetup { display: grid; gap: 6px; }
+.calsetup .ok { color: var(--accent); font-weight: 600; font-size: 14px; }
+.steps { margin: 4px 0; padding-left: 20px; display: grid; gap: 10px; font-size: 14px; line-height: 1.55; }
+.steps a { color: var(--accent); }
+textarea.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; margin-top: 6px; resize: vertical; }
