@@ -460,6 +460,25 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
   const [showDone, setShowDone] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [swiped, setSwiped] = useState<string | null>(null);
+
+  const remove = (id: string) => {
+    setItems((a) => a.filter((x) => x.id !== id));
+    toast("할 일을 삭제했어요");
+  };
+  const toggleDone = (id: string) => setItems((a) => a.map((x) => (x.id === id ? { ...x, done: !x.done, updatedAt: Date.now() } : x)));
+  const row = (i: Item) => (
+    <ItemRow
+      key={i.id}
+      it={i}
+      open={swiped === i.id}
+      onOpenChange={(o) => setSwiped(o ? i.id : null)}
+      onOpen={onOpen}
+      onToggle={() => toggleDone(i.id)}
+      onDelete={() => remove(i.id)}
+    />
+  );
 
   const add = () => {
     if (!title.trim()) return;
@@ -477,6 +496,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
     setItems((a) => [it, ...a]);
     setTitle("");
     setDue("");
+    setAdding(false);
     onOpen(it.id);
   };
 
@@ -485,32 +505,29 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
   const done = sorted.filter((i) => i.done);
 
   return (
-    <section>
+    <section onClick={() => setSwiped(null)}>
       <header className="page-head">
         <h1>할 일</h1>
+        <button className={`icon-btn add-btn ${adding ? "on" : ""}`} aria-label={adding ? "닫기" : "할 일 추가"} onClick={() => setAdding(!adding)}>
+          <IconPlus />
+        </button>
       </header>
+      {adding && (
       <div className="add add-card">
-        <input placeholder="앞으로 할 일을 적어 보세요" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
+        <input autoFocus placeholder="앞으로 할 일을 적어 보세요" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
         <DateField value={due} onChange={setDue} />
-        <button onClick={add}>추가</button>
+        <button onClick={add} disabled={!title.trim()}>추가</button>
       </div>
-      {open.length === 0 && <p className="muted">아직 할 일이 없어요.</p>}
-      <ul className="items">
-        {open.map((i) => (
-          <ItemRow key={i.id} it={i} onOpen={onOpen} />
-        ))}
-      </ul>
+      )}
+      {open.length === 0 && !adding && <p className="muted">아직 할 일이 없어요. 오른쪽 위 + 를 눌러 추가해 보세요.</p>}
+      <ul className="items">{open.map(row)}</ul>
       {done.length > 0 && (
         <>
           <button className="link" onClick={() => setShowDone(!showDone)}>
             완료한 일 {done.length}개 {showDone ? "접기" : "보기"}
           </button>
           {showDone && (
-            <ul className="items done">
-              {done.map((i) => (
-                <ItemRow key={i.id} it={i} onOpen={onOpen} />
-              ))}
-            </ul>
+            <ul className="items done">{done.map(row)}</ul>
           )}
         </>
       )}
@@ -518,12 +535,28 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
   );
 }
 
-function ItemRow({ it, onOpen }: { it: Item; onOpen: (id: string) => void }) {
+function ItemRow(props: {
+  it: Item;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onOpen: (id: string) => void;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const { it } = props;
   const total = it.subtasks.length;
   const doneCount = it.subtasks.filter((s) => s.done).length;
   const n = daysUntil(it.due);
   return (
-    <li onClick={() => onOpen(it.id)}>
+    <SwipeRow
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      onTap={() => props.onOpen(it.id)}
+      actions={[
+        { label: it.done ? "되돌리기" : "완료", cls: "ok", run: props.onToggle },
+        { label: "삭제", cls: "danger", run: props.onDelete },
+      ]}
+    >
       <div className="grow">
         <strong>{it.title}</strong>
         <div className="meta">
@@ -541,7 +574,7 @@ function ItemRow({ it, onOpen }: { it: Item; onOpen: (id: string) => void }) {
         )}
       </div>
       {it.due && <span className={`due ${n !== null && n <= 1 && !it.done ? "soon" : ""}`}>{dueLabel(it.due)}</span>}
-    </li>
+    </SwipeRow>
   );
 }
 
@@ -752,7 +785,7 @@ function SwipeRow(props: {
 
   return (
     <li className="swipe" onClick={(e) => e.stopPropagation()}>
-      <div className="swipe-actions" style={{ width: W }}>
+      <div className="swipe-actions" style={{ width: W, visibility: offset < 0 ? "visible" : "hidden" }}>
         {props.actions.map((a) => (
           <button key={a.label} className={a.cls} onClick={() => (a.run(), props.onOpenChange(false))}>
             {a.label}
