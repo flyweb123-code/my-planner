@@ -704,11 +704,13 @@ function ScheduleEditor({ item, update }: { item: Item; update: (fn: (it: Item) 
         <input type="checkbox" className="switch" checked={allDay} onChange={toggleAllDay} />
       </label>
       <div className="sched-row">
-        <PickText type="date" value={item.due} text={fmtDay(item.due)} onChange={(d) => moveStart(d)} />
+        <span className="sched-tag">시작</span>
+        <PickText type="date" value={item.due} text={fmtDay(item.due)} onChange={(d) => moveStart(d)} className="day" />
         {!allDay && <PickText type="time" value={item.time!} text={fmtTime(item.time!)} onChange={(t) => moveStart(item.due, t)} className="time" />}
       </div>
       <div className="sched-row">
-        <PickText type="date" value={end.date} text={fmtDay(end.date)} onChange={(d) => setEnd(d)} />
+        <span className="sched-tag">종료</span>
+        <PickText type="date" value={end.date} text={fmtDay(end.date)} onChange={(d) => setEnd(d)} className="day" />
         {!allDay && <PickText type="time" value={end.time!} text={fmtTime(end.time!)} onChange={(t) => setEnd(end.date, t)} className="time" />}
       </div>
       <button className="sched-clear" onClick={() => set({ due: "", time: undefined, endDate: undefined, endTime: undefined })}>

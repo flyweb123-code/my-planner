@@ -340,3 +340,8 @@ input.switch:checked::after { transform: translateX(18px); }
 .sched-add .chev svg { width: 18px; height: 18px; }
 .sched-add + .field { border-top: 1px solid var(--line); }
 .field-label { color: var(--muted); font-size: 15px; }
+.sched-row { padding-left: 16px; }
+.sched-tag { width: 34px; flex: 0 0 auto; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pick.day { flex: 1; }
+.sched-row { align-items: baseline; }
+.sched-clear { padding-left: 62px; }
