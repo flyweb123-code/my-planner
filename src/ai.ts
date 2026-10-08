@@ -13,11 +13,26 @@ function client(s: Settings) {
 const fmtNow = () =>
   new Date().toLocaleString("ko-KR", { dateStyle: "full", timeStyle: "short" });
 
-function describeItem(it: Item) {
+// 같은 할 일 안의 다른 대화(할 일 전체 대화, 세부 업무별 대화)에서 최근 내용을 뽑는다.
+// skip: 지금 진행 중인 대화는 messages로 따로 들어가므로 빼기 위한 표시 ("item" 또는 세부 업무 id)
+function talkNotes(it: Item, perChat: number, maxLen: number, skip?: string) {
+  const clip = (t: string) => (t.length > maxLen ? t.slice(0, maxLen) + "…" : t).replace(/\s+/g, " ");
+  const fmt = (label: string, chat: Msg[] | undefined) =>
+    chat && chat.length
+      ? `- ${label}:\n` + chat.slice(-perChat).map((m) => `    ${m.role === "user" ? "사용자" : "Claude"}: ${clip(m.text)}`).join("\n")
+      : "";
+  const parts = [
+    skip === "item" ? "" : fmt("할 일 전체 대화", it.chat),
+    ...it.subtasks.map((x) => (skip === x.id ? "" : fmt(`세부 업무 '${x.title}' 대화`, x.chat))),
+  ].filter(Boolean);
+  return parts.length ? `\n이 할 일에서 나눈 다른 대화(최근 내용):\n${parts.join("\n")}` : "";
+}
+
+function describeItem(it: Item, notes?: { perChat: number; maxLen: number; skip?: string }) {
   const subs = it.subtasks.length
     ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}`).join("\n")
     : "  (아직 없음)";
-  return `제목: ${it.title}\n마감: ${it.due || "없음"}${it.time ? " " + it.time : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}`;
+  return `제목: ${it.title}\n마감: ${it.due || "없음"}${it.time ? " " + it.time : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}${notes ? talkNotes(it, notes.perChat, notes.maxLen, notes.skip) : ""}`;
 }
 
 const Suggestions = z.object({
@@ -53,11 +68,28 @@ const suggestTool = {
 };
 
 // Claude 앱처럼 답을 실시간으로 받아 보여 준다. 세부 업무 제안은 도구 호출로 따로 받는다.
+export type World = { items: Item[]; events: CalEvent[]; home: Msg[] };
+
+const eventsText = (events: CalEvent[]) =>
+  events.length
+    ? events.slice(0, 60).map((e) => `- ${e.date} ${e.time ? e.time + (e.endTime ? "~" + e.endTime : "") : "종일"}: ${e.title}`).join("\n")
+    : "(연결 안 됨 또는 일정 없음)";
+
+// 할 일 하나에서 대화할 때도 사용자의 전체 일정을 함께 보도록 넘기는 내용
+function worldText(w: World, exceptId: string) {
+  const others = w.items.filter((i) => !i.done && i.id !== exceptId);
+  const itemsText = others.map((i) => describeItem(i, { perChat: 2, maxLen: 200 })).join("\n\n") || "(없음)";
+  const clip = (t: string) => (t.length > 200 ? t.slice(0, 200) + "…" : t).replace(/\s+/g, " ");
+  const home = w.home.slice(-6).map((m) => `- ${m.role === "user" ? "사용자" : "Claude"}: ${clip(m.text)}`).join("\n") || "(없음)";
+  return `\n\n## 사용자의 다른 할 일\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${eventsText(w.events)}\n\n## 홈 비서와 최근 대화\n${home}`;
+}
+
 export async function streamChat(
   s: Settings,
   item: Item,
   onText: (textSoFar: string) => void,
   subId?: string,
+  world?: World,
 ): Promise<{ text: string; suggestions: Suggestion[] }> {
   const sub = subId ? item.subtasks.find((x) => x.id === subId) : undefined;
   const history = (sub ? sub.chat ?? [] : item.chat).slice(-30).map((m) => ({ role: m.role, content: m.text }));
@@ -75,7 +107,10 @@ export async function streamChat(
       "너는 사용자의 개인 비서이자 대화 상대다. 사용자는 앞으로 할 일 하나에 대해 너와 편하게 이야기한다. " +
       "Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
       "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. 도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
-      `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item)}${focus}`,
+      `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item, { perChat: 8, maxLen: 600, skip: subId ?? "item" })}${focus}` +
+      "\n\n위의 다른 대화 내용은 사용자와 이미 나눈 이야기다. 이어지는 맥락으로 자연스럽게 활용하고, 거기서 정한 내용과 어긋나지 않게 답한다. " +
+      "아래 사용자의 전체 일정도 보고, 겹치는 약속이나 다른 할 일과의 우선순위를 고려해 현실적으로 답한다." +
+      (world ? worldText(world, item.id) : ""),
     tools: [suggestTool],
     tool_choice: { type: "auto" },
     messages: history,
@@ -200,10 +235,8 @@ export async function homeChat(
 ): Promise<{ text: string; actions: Action[] }> {
   const c = client(s);
   const open = items.filter((i) => !i.done);
-  const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i)}`).join("\n\n") || "(없음)";
-  const evText = events.length
-    ? events.slice(0, 60).map((e) => `- ${e.date} ${e.time ? e.time + (e.endTime ? "~" + e.endTime : "") : "종일"}: ${e.title}`).join("\n")
-    : "(연결 안 됨 또는 일정 없음)";
+  const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}`).join("\n\n") || "(없음)";
+  const evText = eventsText(events);
   const system =
     "너는 사용자의 개인 비서다. Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 짧게 답한다. 마크다운을 써도 된다.\n" +
     "사용자가 일정이나 해야 할 일을 말하면 묻지 말고 바로 도구로 정리한다:\n" +
@@ -281,7 +314,7 @@ export type Briefing = z.infer<typeof Briefing>;
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
   const itemsText =
-    open.map((i) => `[id=${i.id}] ${describeItem(i)}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
+    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
   const evText = events.length
     ? events.slice(0, 40).map((e) => `- ${e.date} ${e.time || "종일"}: ${e.title}`).join("\n")
     : "(연결 안 됨 또는 일정 없음)";

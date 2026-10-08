@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_SETTINGS, dueLabel, daysUntil, uid, usePersisted } from "./store";
 import type { Action, Item, Msg, Settings } from "./store";
-import { checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
+import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
@@ -235,7 +235,7 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events, home: homeChat }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
           <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
@@ -810,6 +810,7 @@ function ChatView(props: {
   item: Item;
   subId?: string;
   initial?: string;
+  world: World;
   settings: Settings;
   update: (fn: (it: Item) => Item) => void;
   onBack: () => void;
@@ -845,7 +846,7 @@ function ChatView(props: {
     const withUser = setChat(item, (c) => [...c, { role: "user", text, ts: Date.now() }]);
     update(() => withUser);
     try {
-      const r = await streamChat(settings, withUser, setStreaming, subId);
+      const r = await streamChat(settings, withUser, setStreaming, subId, props.world);
       update((it) =>
         setChat(it, (c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }]),
       );
