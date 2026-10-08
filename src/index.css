@@ -152,3 +152,22 @@ button.google { background: var(--surface); color: var(--text); border: 1px soli
 .reconnect { width: 100%; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; margin-bottom: 8px; }
 .empty h2 { color: var(--text); font-size: 22px; margin: 0; }
 .homechat { min-height: calc(100dvh - 110px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+.timefield { width: auto; }
+.calbadge { font-size: 13px; color: var(--muted); }
+a.btnlink { text-decoration: none; display: inline-block; border-radius: 10px; padding: 6px 10px; font-size: 13px; background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+.day h3 { margin: 22px 0 8px; }
+.day h3.today { color: var(--accent); }
+.day .none { margin: 0; }
+.evs { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.evs li { display: flex; gap: 12px; align-items: baseline; padding: 12px 14px; border-top: 1px solid var(--line); line-height: 1.4; }
+.evs li:first-child { border-top: 0; }
+.evs li.mine { cursor: pointer; }
+.evs .when { flex: 0 0 44px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tabs button { flex: 0 1 110px; }
+.msg.brief { display: grid; gap: 10px; }
+.msg.brief h2 { margin: 0; font-size: 22px; }
+.now-line { display: grid; gap: 4px; text-align: left; white-space: normal; background: var(--accent-soft); color: var(--text); border-radius: 14px; padding: 12px 14px; font-size: 16px; line-height: 1.5; }
+.bgroup { display: grid; gap: 4px; }
+.bgroup .label { margin-bottom: 2px; }
+.label.warn { color: var(--warn); }
+.bline { text-align: left; white-space: normal; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; font-size: 15px; line-height: 1.45; }

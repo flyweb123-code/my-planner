@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_SETTINGS, dueLabel, daysUntil, uid, usePersisted } from "./store";
 import type { Action, Item, Msg, Settings } from "./store";
-import { checkKey, homeChat, streamChat } from "./ai";
-import type { ToolRunner } from "./ai";
+import { checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
+import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string } | { name: "calendar" } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -52,6 +52,54 @@ export default function App() {
     setLinked(false);
   };
 
+  // 날짜가 있는 할 일은 구글 캘린더에 자동으로 올리고, 바뀌면 고치고, 지우면 같이 지운다.
+  // 제목을 타이핑하는 중에 계속 부르지 않도록 잠깐 기다렸다가 한 번에 반영한다.
+  const syncPrev = useRef(items);
+  const toDelete = useRef<string[]>([]);
+  const inFlight = useRef(new Set<string>());
+  useEffect(() => {
+    const ids = new Set(items.map((i) => i.id));
+    for (const p of syncPrev.current) if (!ids.has(p.id) && p.calendarEventId) toDelete.current.push(p.calendarEventId);
+    syncPrev.current = items;
+    if (!gToken) return;
+    const timer = setTimeout(async () => {
+      const token = gcal.savedToken();
+      if (!token) return setGToken(null);
+      let changed = false;
+      for (const eid of toDelete.current.splice(0)) {
+        await gcal.deleteEvent(token, eid).catch(() => {});
+        changed = true;
+      }
+      for (const it of items) {
+        if (inFlight.current.has(it.id)) continue;
+        const want = it.due ? `${it.title}|${it.due}|${it.time ?? ""}` : "";
+        if (want === (it.calSynced ?? "") && (!!it.calendarEventId === !!want)) continue;
+        inFlight.current.add(it.id);
+        try {
+          if (!want && it.calendarEventId) {
+            await gcal.deleteEvent(token, it.calendarEventId);
+            setItems((all) => all.map((x) => (x.id === it.id ? { ...x, calendarEventId: undefined, calSynced: "" } : x)));
+          } else if (want && !it.calendarEventId) {
+            const eid = await gcal.createForItem(token, it);
+            setItems((all) => all.map((x) => (x.id === it.id ? { ...x, calendarEventId: eid, calSynced: want } : x)));
+          } else if (want) {
+            await gcal.updateForItem(token, it.calendarEventId!, it);
+            setItems((all) => all.map((x) => (x.id === it.id ? { ...x, calSynced: want } : x)));
+          }
+          changed = true;
+        } catch (e) {
+          toast(`캘린더에 반영하지 못했어요: ${(e as Error).message}`);
+          if (!gcal.savedToken()) setGToken(null);
+          break;
+        } finally {
+          inFlight.current.delete(it.id);
+        }
+      }
+      if (changed) loadEvents();
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [items, gToken, setItems, loadEvents]);
+
   // 대화 중 도구가 연달아 실행될 때 최신 목록을 바로 보도록 ref에도 들고 있는다.
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -72,12 +120,13 @@ export default function App() {
   const runTool: ToolRunner = async (name, input) => {
     const all = itemsRef.current;
     if (name === "add_item") {
-      const x = input as { title: string; due?: string; note?: string; subtasks?: string[] };
+      const x = input as { title: string; due?: string; time?: string; note?: string; subtasks?: string[] };
       const it: Item = {
         id: uid(),
         title: x.title,
         note: x.note ?? "",
         due: x.due ?? "",
+        time: x.time || undefined,
         done: false,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -87,7 +136,11 @@ export default function App() {
       commit([it, ...all]);
       return {
         result: `추가함. id=${it.id}`,
-        action: { kind: "item", text: `할 일 추가: ${it.title}${it.due ? ` (${it.due})` : ""}`, undo: { itemId: it.id } },
+        action: {
+          kind: "item",
+          text: `할 일 추가: ${it.title}${it.due ? ` (${it.due}${it.time ? " " + it.time : ""})` : ""}${it.due && calOn ? " · 캘린더에도 올림" : ""}`,
+          undo: { itemId: it.id },
+        },
       };
     }
     if (name === "add_subtasks") {
@@ -102,7 +155,7 @@ export default function App() {
       };
     }
     if (name === "update_item") {
-      const x = input as { item_id: string; title?: string; due?: string; done?: boolean };
+      const x = input as { item_id: string; title?: string; due?: string; time?: string; done?: boolean };
       const target = all.find((i) => i.id === x.item_id);
       if (!target) throw new Error("그 id의 할 일이 없어요.");
       const change: Partial<Item> = {};
@@ -118,6 +171,11 @@ export default function App() {
         prev.due = target.due;
         words.push(x.due ? `마감 → ${x.due}` : "마감 없앰");
       }
+      if (x.time !== undefined) {
+        change.time = x.time || undefined;
+        prev.time = target.time;
+        words.push(x.time ? `시간 → ${x.time}` : "시간 없앰");
+      }
       if (x.done !== undefined) {
         change.done = x.done;
         prev.done = target.done;
@@ -129,16 +187,7 @@ export default function App() {
         action: { kind: "update", text: `'${target.title}' ${words.join(", ")}`, undo: { itemId: target.id, prev } },
       };
     }
-    const x = input as { title: string; date?: string; start?: string; end?: string };
-    const token = gcal.savedToken();
-    if (!token) {
-      setGToken(null);
-      throw new Error("캘린더 연결이 만료됐어요. 사용자가 '캘린더 다시 연결'을 눌러야 해요.");
-    }
-    await gcal.addEvent(token, x);
-    loadEvents();
-    const when = x.start ? new Date(x.start).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : x.date;
-    return { result: "캘린더에 넣음.", action: { kind: "event", text: `캘린더에 추가: ${x.title} (${when})` } };
+    throw new Error(`모르는 도구: ${name}`);
   };
 
   const undo = (a: Action) => {
@@ -149,7 +198,7 @@ export default function App() {
     if (a.kind === "update") updateItem(u.itemId, (it) => ({ ...it, ...u.prev }));
   };
 
-  const open = (id: string) => id && items.some((i) => i.id === id) && setView({ name: "item", id });
+  const open = (id: string) => id && setView({ name: "item", id });
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
   return (
@@ -187,6 +236,9 @@ export default function App() {
         {view.name === "chat" && current && (
           <ChatView item={current} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
+        {view.name === "calendar" && (
+          <CalendarView events={events} calOn={calOn} linked={linked} onConnect={connectCalendar} onRefresh={loadEvents} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
+        )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
         )}
@@ -199,6 +251,9 @@ export default function App() {
           <button className={view.name === "list" || view.name === "item" ? "on" : ""} onClick={() => setView({ name: "list" })}>
             <span>📋</span>할 일
           </button>
+          <button className={view.name === "calendar" ? "on" : ""} onClick={() => setView({ name: "calendar" })}>
+            <span>📅</span>캘린더
+          </button>
           <button className={view.name === "settings" ? "on" : ""} onClick={() => setView({ name: "settings" })}>
             <span>⚙️</span>설정
           </button>
@@ -209,6 +264,8 @@ export default function App() {
 }
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
+
+let briefCache: { at: number; brief: Briefing } | null = null;
 
 function HomeChat(props: {
   items: Item[];
@@ -248,6 +305,7 @@ function HomeChat(props: {
     setChat((c) => [...c, { role: "user", text, ts: Date.now() }]);
     try {
       const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool);
+      if (r.actions.length) briefCache = null;
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
       setChat((c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]);
@@ -264,8 +322,66 @@ function HomeChat(props: {
     setChat((c) => c.map((m, i) => (i === mi ? { ...m, actions: m.actions!.map((x, j) => (j === ai ? { ...x, undone: true } : x)) } : m)));
   };
 
-  const hour = new Date().getHours();
-  const greet = hour < 12 ? "좋은 아침이에요" : hour < 18 ? "좋은 오후예요" : "오늘도 수고했어요";
+  // 홈을 열 때마다 비서가 먼저 말을 건다: 지금 할 일, 놓친 것, 확인할 것. 30분 동안은 다시 묻지 않는다.
+  const [sessionStart] = useState(chat.length);
+  const [brief, setBrief] = useState<Briefing | null>(() => briefCache?.brief ?? null);
+  const [briefLoading, setBriefLoading] = useState(false);
+  useEffect(() => {
+    if (!settings.apiKey) return setBrief(simpleBriefing(items));
+    if (briefCache && Date.now() - briefCache.at < 30 * 60000) return;
+    setBriefLoading(true);
+    makeBriefing(settings, items, events)
+      .then((b) => {
+        briefCache = { at: Date.now(), brief: b };
+        setBrief(b);
+      })
+      .catch(() => setBrief(simpleBriefing(items)))
+      .finally(() => setBriefLoading(false));
+    // 처음 열 때와 캘린더 일정이 들어왔을 때만 다시 만든다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.apiKey, events.length]);
+
+  const ask = (text: string) => send(`${text} 이거 어떻게 하면 좋을까?`);
+  const briefing = (
+    <div className="msg assistant brief">
+      <h2>{greeting()}</h2>
+      {!brief || briefLoading ? (
+        <p className="muted">할 일과 일정을 살펴보는 중…</p>
+      ) : (
+        <>
+          <button className="now-line" onClick={() => settings.apiKey && ask(brief.now.text)}>
+            <span className="label">지금</span>
+            <span>{brief.now.text}</span>
+          </button>
+          {brief.missed.length > 0 && (
+            <div className="bgroup">
+              <p className="label warn">놓친 것</p>
+              {brief.missed.map((m, i) => (
+                <button key={i} className="bline" onClick={() => settings.apiKey && ask(m.text)}>
+                  {m.text}
+                </button>
+              ))}
+            </div>
+          )}
+          {brief.check.length > 0 && (
+            <div className="bgroup">
+              <p className="label">확인할 것</p>
+              {brief.check.map((m, i) => (
+                <button key={i} className="bline" onClick={() => settings.apiKey && ask(m.text)}>
+                  {m.text}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {!settings.apiKey && (
+        <p className="hint">
+          <a onClick={props.onGoSettings}>설정에서 API 키를 넣으면</a> Claude가 직접 살펴보고 대화도 할 수 있어요.
+        </p>
+      )}
+    </div>
+  );
 
   return (
     <section className="homechat">
@@ -276,25 +392,9 @@ function HomeChat(props: {
       )}
 
       <div className="thread">
-        {chat.length === 0 && !busy && (
-          <div className="empty">
-            <h2>{greet}</h2>
-            <p>일정이나 할 일을 그냥 말해 주세요. 알아서 할 일 목록에 정리할게요.</p>
-            <div className="chips">
-              {["지금 뭐 하면 좋을까?", "내일 오후 3시 치과 예약", "이번 주 일정 알려 줘"].map((t) => (
-                <button key={t} className="chip" onClick={() => send(t)} disabled={!settings.apiKey}>
-                  {t}
-                </button>
-              ))}
-            </div>
-            {!settings.apiKey && (
-              <p className="hint">
-                <a onClick={props.onGoSettings}>설정에서 API 키를 넣으면</a> 대화할 수 있어요.
-              </p>
-            )}
-          </div>
-        )}
-        {chat.map((m, i) =>
+        {chat.slice(0, sessionStart).length === 0 && briefing}
+        {chat.map((m, i) => [
+          i === sessionStart && sessionStart > 0 ? <div key="brief">{briefing}</div> : null,
           m.role === "user" ? (
             <div key={i} className="msg user">
               {m.text}
@@ -321,7 +421,7 @@ function HomeChat(props: {
               )}
             </div>
           ),
-        )}
+        ])}
         {busy && <div className="msg assistant">{streaming ? <Markdown text={streaming} /> : <span className="typing">●●●</span>}</div>}
         <div ref={endRef} />
       </div>
@@ -479,21 +579,6 @@ function ItemView(props: {
   const addSub = (title: string) =>
     update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
 
-  const addToCalendar = async () => {
-    if (!item.due) return;
-    if (!props.gToken) {
-      window.open(gcal.addLink(item.title, item.due), "_blank");
-      return;
-    }
-    try {
-      const id = await gcal.addEvent(props.gToken, { title: `⏰ ${item.title}`, date: item.due });
-      update((it) => ({ ...it, calendarEventId: id }));
-      toast("캘린더에 마감일을 넣었어요.");
-    } catch (e) {
-      toast((e as Error).message);
-    }
-  };
-
   const last = item.chat[item.chat.length - 1];
 
   return (
@@ -510,16 +595,25 @@ function ItemView(props: {
       <input className="title-input" value={item.title} onChange={(e) => update((it) => ({ ...it, title: e.target.value }))} />
       <div className="row">
         <label>
-          마감 <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v }))} />
+          마감 <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
         </label>
+        {item.due && (
+          <label>
+            시간{" "}
+            <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
+          </label>
+        )}
         <label className="check">
           <input type="checkbox" checked={item.done} onChange={(e) => update((it) => ({ ...it, done: e.target.checked }))} /> 완료
         </label>
-        {item.due && !item.calendarEventId && (
-          <button className="secondary small" onClick={addToCalendar}>
-            캘린더에 넣기
-          </button>
-        )}
+        {item.due &&
+          (props.gToken ? (
+            <span className="calbadge">{item.calendarEventId ? "📅 캘린더에 있음" : "📅 캘린더에 올리는 중"}</span>
+          ) : (
+            <a className="secondary small btnlink" href={gcal.addLink(item.title, item.due)} target="_blank" rel="noreferrer">
+              캘린더에 넣기
+            </a>
+          ))}
       </div>
       <textarea placeholder="메모" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
 
@@ -860,7 +954,7 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
         <span className="dot-big" />
         <div className="grow">
           <strong>{props.calOn ? "구글 캘린더에 연결돼 있어요" : props.linked ? "연결 시간이 끝났어요" : "연결 안 됨"}</strong>
-          {props.calOn && <span className="muted small">앞으로 7일 일정 {props.eventsCount}개</span>}
+          {props.calOn && <span className="muted small">앞으로 30일 일정 {props.eventsCount}개 · 날짜가 있는 할 일은 자동으로 올라가요</span>}
         </div>
       </div>
       {props.calOn ? (
@@ -915,5 +1009,88 @@ function DataSettings() {
         </label>
       </div>
     </div>
+  );
+}
+
+/* ---------------- 캘린더 ---------------- */
+
+function CalendarView(props: {
+  events: CalEvent[];
+  calOn: boolean;
+  linked: boolean;
+  onConnect: () => void;
+  onRefresh: () => void;
+  onOpen: (id: string) => void;
+  onGoSettings: () => void;
+}) {
+  useEffect(() => {
+    if (props.calOn) props.onRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.calOn]);
+
+  const header = (
+    <header className="page-head">
+      <h1>캘린더</h1>
+      {props.calOn && (
+        <button className="ghost" onClick={props.onRefresh}>
+          새로고침
+        </button>
+      )}
+    </header>
+  );
+
+  if (!props.calOn)
+    return (
+      <section>
+        {header}
+        <div className="empty">
+          <p>{props.linked ? "구글 캘린더 연결 시간이 끝났어요." : "구글 캘린더를 연결하면 여기서 일정을 볼 수 있어요."}</p>
+          {gcal.available() ? (
+            <button className="google" onClick={props.onConnect}>
+              <span className="g">G</span> {props.linked ? "다시 연결" : "구글로 연결"}
+            </button>
+          ) : (
+            <button className="secondary" onClick={props.onGoSettings}>
+              설정으로 가기
+            </button>
+          )}
+        </div>
+      </section>
+    );
+
+  const days = new Map<string, CalEvent[]>();
+  for (const e of props.events) days.set(e.date, [...(days.get(e.date) ?? []), e]);
+  const today = new Date().toLocaleDateString("sv-SE");
+  const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString("sv-SE");
+  const label = (d: string) => {
+    const w = new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
+    return d === today ? `오늘 · ${w}` : d === tomorrow ? `내일 · ${w}` : w;
+  };
+
+  return (
+    <section>
+      {header}
+      {!days.has(today) && (
+        <div className="day">
+          <h3 className="today">{label(today)}</h3>
+          <p className="muted small none">오늘은 일정이 없어요.</p>
+        </div>
+      )}
+      {[...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([d, evs]) => (
+        <div key={d} className="day">
+          <h3 className={d === today ? "today" : ""}>{label(d)}</h3>
+          <ul className="evs">
+            {evs.map((e) => (
+              <li key={e.id} className={e.itemId ? "mine" : ""} onClick={() => e.itemId && props.onOpen(e.itemId)}>
+                <span className="when">{e.time ? e.time : "종일"}</span>
+                <span className="grow">{e.title}</span>
+                {e.itemId && <span className="badge">할 일</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <p className="muted small">앞으로 30일 일정이에요.</p>
+    </section>
   );
 }

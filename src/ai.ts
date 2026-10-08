@@ -17,7 +17,7 @@ function describeItem(it: Item) {
   const subs = it.subtasks.length
     ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}`).join("\n")
     : "  (아직 없음)";
-  return `제목: ${it.title}\n마감: ${it.due || "없음"}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}`;
+  return `제목: ${it.title}\n마감: ${it.due || "없음"}${it.time ? " " + it.time : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}`;
 }
 
 const Suggestions = z.object({
@@ -98,6 +98,7 @@ export const ToolInputs = {
   add_item: z.object({
     title: z.string().min(1),
     due: z.string().optional(),
+    time: z.string().optional(),
     note: z.string().optional(),
     subtasks: z.array(z.string()).optional(),
   }),
@@ -106,19 +107,14 @@ export const ToolInputs = {
     item_id: z.string(),
     title: z.string().optional(),
     due: z.string().optional(),
+    time: z.string().optional(),
     done: z.boolean().optional(),
-  }),
-  add_calendar_event: z.object({
-    title: z.string().min(1),
-    date: z.string().optional(),
-    start: z.string().optional(),
-    end: z.string().optional(),
   }),
 };
 export type ToolName = keyof typeof ToolInputs;
 export type ToolRunner = (name: ToolName, input: unknown) => Promise<{ result: string; action?: Action }>;
 
-const homeTools = (calendar: boolean): Anthropic.Tool[] => {
+const homeTools = (): Anthropic.Tool[] => {
   const tools: Anthropic.Tool[] = [
     {
       name: "add_item",
@@ -130,6 +126,7 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
         properties: {
           title: { type: "string", description: "짧은 한국어 제목" },
           due: { type: "string", description: "마감 또는 예정 날짜 YYYY-MM-DD. 말하지 않았으면 생략" },
+          time: { type: "string", description: "정해진 시각이 있으면 24시간 HH:MM (예: 15:00). 없으면 생략" },
           note: { type: "string", description: "시간, 장소 같은 부가 정보. 없으면 생략" },
           subtasks: { type: "array", items: { type: "string" }, description: "처음부터 넣을 세부 업무. 사용자가 말한 것만" },
         },
@@ -161,6 +158,7 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
           item_id: { type: "string" },
           title: { type: "string" },
           due: { type: "string", description: "YYYY-MM-DD, 또는 마감 없애기는 빈 문자열" },
+          time: { type: "string", description: "HH:MM, 또는 시간 없애기는 빈 문자열" },
           done: { type: "boolean" },
         },
         required: ["item_id"],
@@ -169,25 +167,6 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
       eager_input_streaming: true,
     },
   ];
-  if (calendar)
-    tools.push({
-      name: "add_calendar_event",
-      description:
-        "구글 캘린더에 일정을 넣는다. 특정 날짜나 시간에 정해진 약속, 회의, 방문 같은 일정이면 할 일 추가와 함께 쓴다. " +
-        "시간이 있으면 start/end(ISO 8601, 한국 시간 +09:00), 날짜만 있으면 date.",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          title: { type: "string" },
-          date: { type: "string", description: "종일 일정 YYYY-MM-DD" },
-          start: { type: "string", description: "예: 2026-10-09T15:00:00+09:00" },
-          end: { type: "string", description: "생략하면 1시간" },
-        },
-        required: ["title"],
-        additionalProperties: false,
-      },
-      eager_input_streaming: true,
-    });
   return tools;
 };
 
@@ -214,17 +193,20 @@ export async function homeChat(
   const c = client(s);
   const open = items.filter((i) => !i.done);
   const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i)}`).join("\n\n") || "(없음)";
-  const evText = events.length ? events.map((e) => `- ${e.start}${e.end ? " ~ " + e.end : ""}: ${e.title}`).join("\n") : "(연결 안 됨 또는 일정 없음)";
+  const evText = events.length
+    ? events.slice(0, 60).map((e) => `- ${e.date} ${e.time ? e.time + (e.endTime ? "~" + e.endTime : "") : "종일"}: ${e.title}`).join("\n")
+    : "(연결 안 됨 또는 일정 없음)";
   const system =
     "너는 사용자의 개인 비서다. Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 짧게 답한다. 마크다운을 써도 된다.\n" +
     "사용자가 일정이나 해야 할 일을 말하면 묻지 말고 바로 도구로 정리한다:\n" +
     "- 기존 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
     "- 관련된 할 일이 없으면 add_item으로 새로 만든다. '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다.\n" +
     "- 마감 변경, 완료 같은 말은 update_item을 쓴다.\n" +
-    (calendar ? "- 정해진 날짜/시간의 약속이면 add_calendar_event로 캘린더에도 넣는다.\n" : "") +
+    "- 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
+    (calendar ? "- 날짜가 있는 할 일은 앱이 구글 캘린더에 자동으로 올린다. 따로 캘린더에 넣을 필요 없다.\n" : "") +
     "도구를 쓴 뒤에는 무엇을 어디에 넣었는지 한두 문장으로 알려 준다. 그냥 질문이나 잡담이면 도구 없이 답한다. " +
     "지금 무엇을 해야 할지 물으면 마감과 캘린더를 보고 하나를 골라 준다.\n\n" +
-    `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로 7일 캘린더\n${evText}`;
+    `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}`;
 
   const messages: Anthropic.MessageParam[] = [...historyFor(past), { role: "user", content: userText }];
   const actions: Action[] = [];
@@ -235,7 +217,7 @@ export async function homeChat(
       max_tokens: 64000,
       output_config: { effort: "low" },
       system,
-      tools: homeTools(calendar),
+      tools: homeTools(),
       tool_choice: { type: "auto" },
       messages,
     });
@@ -273,81 +255,69 @@ export async function homeChat(
   return { text: shown, actions };
 }
 
-const Briefing = z.object({
-  now: z.object({
-    title: z.string().describe("지금 당장 하면 좋은 한 가지"),
-    reason: z.string().describe("왜 지금 이걸 해야 하는지 한 문장"),
-    item_id: z.string().describe("관련 항목 id, 없으면 빈 문자열"),
-  }),
-  next: z.array(z.object({ title: z.string(), item_id: z.string() })).describe("그다음 할 일 최대 3개"),
-  updates: z
-    .array(z.object({ text: z.string(), item_id: z.string() }))
-    .describe("사용자가 확인하거나 갱신해야 할 것: 마감 지난 항목, 오래 손대지 않은 항목, 진행 상황 업데이트 필요 등. 최대 4개"),
-});
-export type Briefing = z.infer<typeof Briefing>;
-
 // 저장한 API 키로 Claude에 닿는지 확인한다. 토큰을 쓰지 않는 모델 조회로 확인.
 export async function checkKey(s: Settings): Promise<string> {
   const m = await client(s).models.retrieve(s.model);
   return m.display_name;
 }
 
+/* ---------------- 홈 첫 화면 제안: 지금 할 일, 놓친 것, 확인할 것 ---------------- */
+
+const Briefing = z.object({
+  now: z.object({ text: z.string().describe("지금 바로 하면 좋은 한 가지와 짧은 이유. 한 문장"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
+  missed: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("놓친 것: 마감이 지났거나 오늘인데 안 한 일, 오래 손대지 않은 일. 없으면 빈 배열. 최대 3개"),
+  check: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("확인할 것: 다가오는 일정 준비, 마감이 없어 정해야 할 일, 진행 상황 업데이트가 필요한 일. 최대 3개"),
+});
+export type Briefing = z.infer<typeof Briefing>;
+
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
-  const itemsText = open
-    .map(
-      (i) =>
-        `[id=${i.id}] ${describeItem(i)}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`,
-    )
-    .join("\n\n");
+  const itemsText =
+    open.map((i) => `[id=${i.id}] ${describeItem(i)}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
   const evText = events.length
-    ? events.map((e) => `- ${e.start} ~ ${e.end}: ${e.title}`).join("\n")
+    ? events.slice(0, 40).map((e) => `- ${e.date} ${e.time || "종일"}: ${e.title}`).join("\n")
     : "(연결 안 됨 또는 일정 없음)";
   const res = await client(s).messages.parse({
     model: s.model,
     max_tokens: 16000,
     output_config: { effort: "low", format: zodOutputFormat(Briefing) },
     system:
-      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고, 지금 무엇을 해야 하는지 딱 하나를 골라 주고, " +
-      "그다음 할 일과 사용자가 업데이트해야 할 내용을 알려준다. 캘린더 일정 사이의 빈 시간과 마감을 고려한다. 짧고 친근한 한국어로.",
-    messages: [
-      {
-        role: "user",
-        content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText || "(없음)"}\n\n## 앞으로의 캘린더 일정\n${evText}`,
-      },
-    ],
+      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 짧은 제안을 만든다. " +
+      "지금 시각을 꼭 고려한다(새벽이면 쉬라고 하거나 아침에 할 일을 알려 주는 식). 각 문장은 짧고 친근한 한국어로. " +
+      "할 일이 하나도 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
+    messages: [{ role: "user", content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}` }],
   });
-  if (!res.parsed_output) throw new Error("브리핑을 만들지 못했어요.");
+  if (!res.parsed_output) throw new Error("제안을 만들지 못했어요.");
   return res.parsed_output;
 }
 
-// API 키가 없을 때 쓰는 간단한 규칙 기반 브리핑
+// API 키가 없거나 실패했을 때 쓰는 간단한 규칙 기반 제안
 export function simpleBriefing(items: Item[]): Briefing {
   const open = items.filter((i) => !i.done);
-  const score = (i: Item) => {
-    if (!i.due) return Infinity;
-    return new Date(i.due).getTime();
-  };
-  const sorted = [...open].sort((a, b) => score(a) - score(b));
-  const first = sorted[0];
-  const firstSub = first?.subtasks.find((s) => !s.done);
+  const today = new Date().toLocaleDateString("sv-SE");
+  const byDue = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+  const first = byDue[0];
   const week = Date.now() - 7 * 86400000;
   return {
     now: first
-      ? {
-          title: firstSub ? `${first.title} · ${firstSub.title}` : first.title,
-          reason: first.due ? `마감이 가장 가까운 일이에요 (${first.due}).` : "목록에서 가장 먼저 있는 일이에요.",
-          item_id: first.id,
-        }
-      : { title: "할 일을 하나 추가해 보세요", reason: "아직 등록된 일이 없어요.", item_id: "" },
-    next: sorted.slice(1, 4).map((i) => ({ title: i.title, item_id: i.id })),
-    updates: [
-      ...open
-        .filter((i) => i.due && new Date(i.due + "T23:59:59").getTime() < Date.now())
-        .map((i) => ({ text: `'${i.title}' 마감이 지났어요. 날짜를 바꾸거나 완료 처리할까요?`, item_id: i.id })),
-      ...open
-        .filter((i) => i.updatedAt < week)
-        .map((i) => ({ text: `'${i.title}'을(를) 일주일 넘게 손대지 않았어요.`, item_id: i.id })),
-    ].slice(0, 4),
+      ? { text: `${first.title}${first.due ? ` (마감 ${first.due})` : ""}부터 해 보세요.`, item_id: first.id }
+      : { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "" },
+    missed: open
+      .filter((i) => i.due && i.due < today)
+      .slice(0, 3)
+      .map((i) => ({ text: `'${i.title}' 마감이 지났어요.`, item_id: i.id })),
+    check: [
+      ...open.filter((i) => i.updatedAt < week).map((i) => ({ text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
+      ...open.filter((i) => !i.due).map((i) => ({ text: `'${i.title}' 마감을 정할까요?`, item_id: i.id })),
+    ].slice(0, 3),
   };
+}
+
+export function greeting(d = new Date()): string {
+  const h = d.getHours();
+  if (h < 5) return "늦은 밤이에요";
+  if (h < 11) return "좋은 아침이에요";
+  if (h < 17) return "좋은 오후예요";
+  if (h < 22) return "좋은 저녁이에요";
+  return "오늘 하루 수고했어요";
 }

@@ -19,7 +19,9 @@ export type Item = {
   updatedAt: number;
   subtasks: Subtask[];
   chat: Msg[];
+  time?: string; // "HH:MM", 없으면 종일
   calendarEventId?: string;
+  calSynced?: string; // 마지막으로 캘린더에 반영한 제목/날짜/시간
 };
 export type Settings = { apiKey: string; model: string };
 

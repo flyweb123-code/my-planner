@@ -2,8 +2,6 @@
 // 서버가 없는 앱이라 권한은 1시간마다 만료되고, 그때 버튼 한 번으로 다시 받는다.
 import { GOOGLE_CLIENT_ID } from "./config";
 
-export type CalEvent = { id: string; title: string; start: string; end: string };
-
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type TokenClient = { requestAccessToken: (o?: { prompt?: string }) => void };
 declare global {
@@ -109,42 +107,74 @@ async function api(token: string, path: string, init?: RequestInit) {
   return res.status === 204 ? null : res.json();
 }
 
-const fmt = (v: { dateTime?: string; date?: string }) =>
-  v.dateTime
-    ? new Date(v.dateTime).toLocaleString("ko-KR", { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" })
-    : `${v.date} (종일)`;
+const tz = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+const localDate = (d: Date) => d.toLocaleDateString("sv-SE");
 
-export async function upcoming(token: string, days = 7): Promise<CalEvent[]> {
-  const now = new Date();
+export type CalEvent = {
+  id: string;
+  title: string;
+  date: string; // 시작 날짜 YYYY-MM-DD (이 기기 시간 기준)
+  time: string; // "15:00" 또는 종일이면 ""
+  endTime: string;
+  itemId?: string; // 이 앱의 할 일에서 만든 일정이면 그 할 일 id
+};
+
+export async function upcoming(token: string, days = 30): Promise<CalEvent[]> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const q = new URLSearchParams({
-    timeMin: now.toISOString(),
-    timeMax: new Date(now.getTime() + days * 86400000).toISOString(),
+    timeMin: today.toISOString(),
+    timeMax: new Date(today.getTime() + days * 86400000).toISOString(),
     singleEvents: "true",
     orderBy: "startTime",
-    maxResults: "50",
+    maxResults: "250",
   });
   const data = await api(token, `/calendars/primary/events?${q}`);
-  return (data.items ?? []).map((e: { id: string; summary?: string; start: object; end: object }) => ({
+  type Raw = { id: string; summary?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string }; extendedProperties?: { private?: { plannerItemId?: string } } };
+  const hm = (iso: string) => new Date(iso).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return (data.items ?? []).map((e: Raw) => ({
     id: e.id,
     title: e.summary ?? "(제목 없음)",
-    start: fmt(e.start),
-    end: fmt(e.end),
+    date: e.start.dateTime ? localDate(new Date(e.start.dateTime)) : e.start.date!,
+    time: e.start.dateTime ? hm(e.start.dateTime) : "",
+    endTime: e.end.dateTime ? hm(e.end.dateTime) : "",
+    itemId: e.extendedProperties?.private?.plannerItemId,
   }));
 }
 
-// date: 종일 일정(YYYY-MM-DD). start/end: 시간 있는 일정(ISO 문자열).
-export async function addEvent(token: string, ev: { title: string; date?: string; start?: string; end?: string }): Promise<string> {
-  let body;
-  if (ev.start) {
-    const end = ev.end || new Date(new Date(ev.start).getTime() + 3600000).toISOString();
-    body = { summary: ev.title, start: { dateTime: ev.start }, end: { dateTime: end } };
-  } else if (ev.date) {
-    const next = new Date(ev.date + "T00:00:00");
-    next.setDate(next.getDate() + 1);
-    body = { summary: ev.title, start: { date: ev.date }, end: { date: next.toLocaleDateString("sv-SE") } };
-  } else throw new Error("날짜가 없어요.");
-  const data = await api(token, "/calendars/primary/events", { method: "POST", body: JSON.stringify(body) });
+// 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 1시간짜리, 없으면 종일 일정.
+function body(it: { id: string; title: string; due: string; time?: string }) {
+  const base = { summary: it.title, description: "내 비서 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
+  if (it.time) {
+    const start = new Date(`${it.due}T${it.time}:00`);
+    const end = new Date(start.getTime() + 3600000);
+    return { ...base, start: { dateTime: start.toISOString(), timeZone: tz() }, end: { dateTime: end.toISOString(), timeZone: tz() } };
+  }
+  const next = new Date(it.due + "T00:00:00");
+  next.setDate(next.getDate() + 1);
+  return { ...base, start: { date: it.due }, end: { date: localDate(next) } };
+}
+
+export async function createForItem(token: string, it: { id: string; title: string; due: string; time?: string }): Promise<string> {
+  const data = await api(token, "/calendars/primary/events", { method: "POST", body: JSON.stringify(body(it)) });
   return data.id;
+}
+
+export async function updateForItem(token: string, eventId: string, it: { id: string; title: string; due: string; time?: string }) {
+  // 종일↔시간 일정이 바뀔 수 있어 start/end를 통째로 바꾸는 PUT 대신 PATCH에 둘 다 넣는다.
+  const b = body(it);
+  const start = "date" in b.start ? { date: b.start.date, dateTime: null } : { ...b.start, date: null };
+  const end = "date" in b.end ? { date: b.end.date, dateTime: null } : { ...b.end, date: null };
+  await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ ...b, start, end }) });
+}
+
+export async function deleteEvent(token: string, eventId: string) {
+  try {
+    await api(token, `/calendars/primary/events/${eventId}`, { method: "DELETE" });
+  } catch (e) {
+    // 이미 캘린더에서 지운 일정이면 그냥 넘어간다.
+    if (!String((e as Error).message).includes("410") && !String((e as Error).message).includes("404")) throw e;
+  }
 }
 
 // 연결 없이도 쓸 수 있는 방법: 구글 캘린더의 "일정 추가" 화면을 내용이 채워진 채로 연다.
