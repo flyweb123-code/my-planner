@@ -7,6 +7,7 @@ import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
+import { IconBack, IconCalendar, IconChat, IconLeft, IconList, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string } | { name: "calendar" } | { name: "settings" };
@@ -237,7 +238,7 @@ export default function App() {
           <ChatView item={current} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
-          <CalendarView events={events} calOn={calOn} linked={linked} onConnect={connectCalendar} onRefresh={loadEvents} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
+          <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
         )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
@@ -246,16 +247,20 @@ export default function App() {
       {view.name !== "chat" && (
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
-            <span>💬</span>비서
+            <IconChat />
+            비서
           </button>
           <button className={view.name === "list" || view.name === "item" ? "on" : ""} onClick={() => setView({ name: "list" })}>
-            <span>📋</span>할 일
+            <IconList />
+            할 일
           </button>
           <button className={view.name === "calendar" ? "on" : ""} onClick={() => setView({ name: "calendar" })}>
-            <span>📅</span>캘린더
+            <IconCalendar />
+            캘린더
           </button>
           <button className={view.name === "settings" ? "on" : ""} onClick={() => setView({ name: "settings" })}>
-            <span>⚙️</span>설정
+            <IconSettings />
+            설정
           </button>
         </nav>
       )}
@@ -442,7 +447,7 @@ function HomeChat(props: {
           }}
         />
         <button className="send" aria-label="보내기" onClick={() => send(msg)} disabled={busy || !msg.trim()}>
-          ↑
+          <IconUp />
         </button>
       </div>
     </section>
@@ -484,7 +489,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
       <header className="page-head">
         <h1>할 일</h1>
       </header>
-      <div className="add">
+      <div className="add add-card">
         <input placeholder="앞으로 할 일을 적어 보세요" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
         <DateField value={due} onChange={setDue} />
         <button onClick={add}>추가</button>
@@ -527,7 +532,7 @@ function ItemRow({ it, onOpen }: { it: Item; onOpen: (id: string) => void }) {
               세부 업무 {doneCount}/{total}
             </span>
           )}
-          {it.chat.length > 0 && <span>💬 {it.chat.length}</span>}
+          {it.chat.length > 0 && <span className="chatcount"><IconChat /> {it.chat.length}</span>}
         </div>
         {total > 0 && (
           <div className="bar">
@@ -584,8 +589,9 @@ function ItemView(props: {
   return (
     <section className="detail">
       <header className="page-head">
-        <button className="ghost" onClick={props.onBack}>
-          ← 목록
+        <button className="back" onClick={props.onBack}>
+          <IconBack />
+          할 일
         </button>
         <button className="ghost danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))} onBlur={() => setConfirmDel(false)}>
           {confirmDel ? "한 번 더 누르면 삭제" : "삭제"}
@@ -593,36 +599,42 @@ function ItemView(props: {
       </header>
 
       <input className="title-input" value={item.title} onChange={(e) => update((it) => ({ ...it, title: e.target.value }))} />
-      <div className="row">
-        <label>
-          마감 <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
+      <div className="fields">
+        <div className="field">
+          <span>마감</span>
+          <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
+        </div>
+        {item.due && (
+          <div className="field">
+            <span>시간</span>
+            <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
+          </div>
+        )}
+        <label className="field">
+          <span>완료</span>
+          <input type="checkbox" className="switch" checked={item.done} onChange={(e) => update((it) => ({ ...it, done: e.target.checked }))} />
         </label>
         {item.due && (
-          <label>
-            시간{" "}
-            <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
-          </label>
+          <div className="field">
+            <span>구글 캘린더</span>
+            {props.gToken ? (
+              <span className={`calbadge ${item.calendarEventId ? "" : "pending"}`}>{item.calendarEventId ? "올라가 있음" : "올리는 중…"}</span>
+            ) : (
+              <a className="secondary small btnlink" href={gcal.addLink(item.title, item.due)} target="_blank" rel="noreferrer">
+                캘린더에 넣기
+              </a>
+            )}
+          </div>
         )}
-        <label className="check">
-          <input type="checkbox" checked={item.done} onChange={(e) => update((it) => ({ ...it, done: e.target.checked }))} /> 완료
-        </label>
-        {item.due &&
-          (props.gToken ? (
-            <span className="calbadge">{item.calendarEventId ? "📅 캘린더에 있음" : "📅 캘린더에 올리는 중"}</span>
-          ) : (
-            <a className="secondary small btnlink" href={gcal.addLink(item.title, item.due)} target="_blank" rel="noreferrer">
-              캘린더에 넣기
-            </a>
-          ))}
       </div>
       <textarea placeholder="메모" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
 
       <button className="chat-entry" onClick={props.onChat}>
         <span className="grow">
           <strong>Claude와 대화하기</strong>
-          <span className="muted small preview">{last ? `${last.role === "user" ? "나: " : ""}${last.text}` : "이 일에 대해 편하게 이야기해 보세요"}</span>
+          <span className="muted small preview">{last ? `${last.role === "user" ? "나: " : ""}${last.text.replace(/[*`#]/g, "")}` : "이 일에 대해 편하게 이야기해 보세요"}</span>
         </span>
-        <span className="chev">›</span>
+        <span className="chev"><IconRight /></span>
       </button>
 
       <h3>세부 업무</h3>
@@ -714,8 +726,8 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
   return (
     <section className="chatview">
       <header className="chat-head">
-        <button className="ghost" onClick={props.onBack}>
-          ←
+        <button className="icon-btn" aria-label="뒤로" onClick={props.onBack}>
+          <IconBack />
         </button>
         <div className="grow">
           <strong>{item.title}</strong>
@@ -792,7 +804,7 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
           }}
         />
         <button className="send" aria-label="보내기" onClick={() => send(msg)} disabled={busy || !msg.trim()}>
-          ↑
+          <IconUp />
         </button>
       </div>
     </section>
@@ -828,21 +840,21 @@ function SettingsView(props: {
               <strong>Claude 연결</strong>
               <span className={`status ${settings.apiKey ? "on" : ""}`}>{settings.apiKey ? `API 키 저장됨 ${keyTail}` : "API 키 없음"}</span>
             </span>
-            <span className="chev">›</span>
+            <span className="chev"><IconRight /></span>
           </li>
           <li onClick={() => setPage("calendar")}>
             <span className="grow">
               <strong>구글 캘린더</strong>
               <span className={`status ${props.calOn ? "on" : ""}`}>{props.calOn ? "연결됨" : props.linked ? "다시 연결 필요" : "연결 안 됨"}</span>
             </span>
-            <span className="chev">›</span>
+            <span className="chev"><IconRight /></span>
           </li>
           <li onClick={() => setPage("data")}>
             <span className="grow">
               <strong>데이터 백업</strong>
               <span className="status">내려받기, 불러오기</span>
             </span>
-            <span className="chev">›</span>
+            <span className="chev"><IconRight /></span>
           </li>
         </ul>
       </section>
@@ -852,8 +864,9 @@ function SettingsView(props: {
   return (
     <section className="settings">
       <header className="sub-head">
-        <button className="ghost" onClick={() => setPage("main")}>
-          ← 설정
+        <button className="back" onClick={() => setPage("main")}>
+          <IconBack />
+          설정
         </button>
         <h1>{titles[page]}</h1>
       </header>
@@ -1014,83 +1027,208 @@ function DataSettings() {
 
 /* ---------------- 캘린더 ---------------- */
 
+type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string };
+
+const ymd = (d: Date) => d.toLocaleDateString("sv-SE");
+const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
+
 function CalendarView(props: {
-  events: CalEvent[];
+  items: Item[];
+  gToken: string | null;
   calOn: boolean;
   linked: boolean;
   onConnect: () => void;
-  onRefresh: () => void;
   onOpen: (id: string) => void;
   onGoSettings: () => void;
 }) {
+  const today = ymd(new Date());
+  const [mode, setMode] = useState<"month" | "list">(() => {
+    try {
+      return (localStorage.getItem("calMode") as "month" | "list") || "month";
+    } catch {
+      return "month";
+    }
+  });
+  const [month, setMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [selected, setSelected] = useState(today);
+  const [events, setEvents] = useState<CalEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
-    if (props.calOn) props.onRefresh();
+    try {
+      localStorage.setItem("calMode", mode);
+    } catch {
+      /* 무시 */
+    }
+  }, [mode]);
+
+  // 달력에 보이는 6주(앞뒤 달 일부 포함) 범위
+  const gridStart = new Date(month);
+  gridStart.setDate(1 - month.getDay());
+  const cells = Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    return d;
+  });
+  const rangeFrom = mode === "month" ? cells[0] : new Date(new Date().setHours(0, 0, 0, 0));
+  const rangeTo = mode === "month" ? new Date(cells[41].getTime() + 86400000) : new Date(rangeFrom.getTime() + 30 * 86400000);
+  const rangeKey = `${ymd(rangeFrom)}~${ymd(rangeTo)}`;
+
+  const load = useCallback(() => {
+    if (!props.gToken) return setEvents([]);
+    setLoading(true);
+    gcal
+      .range(props.gToken, rangeFrom, rangeTo)
+      .then(setEvents)
+      .catch((e) => toast((e as Error).message))
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.calOn]);
+  }, [props.gToken, rangeKey]);
+  useEffect(load, [load]);
 
-  const header = (
-    <header className="page-head">
-      <h1>캘린더</h1>
-      {props.calOn && (
-        <button className="ghost" onClick={props.onRefresh}>
-          새로고침
-        </button>
-      )}
-    </header>
-  );
+  // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
+  const byDay = new Map<string, DayEntry[]>();
+  const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
+  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId });
+  const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
+  for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id });
+  for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
 
-  if (!props.calOn)
-    return (
-      <section>
-        {header}
-        <div className="empty">
-          <p>{props.linked ? "구글 캘린더 연결 시간이 끝났어요." : "구글 캘린더를 연결하면 여기서 일정을 볼 수 있어요."}</p>
-          {gcal.available() ? (
-            <button className="google" onClick={props.onConnect}>
-              <span className="g">G</span> {props.linked ? "다시 연결" : "구글로 연결"}
-            </button>
-          ) : (
-            <button className="secondary" onClick={props.onGoSettings}>
-              설정으로 가기
-            </button>
-          )}
-        </div>
-      </section>
-    );
-
-  const days = new Map<string, CalEvent[]>();
-  for (const e of props.events) days.set(e.date, [...(days.get(e.date) ?? []), e]);
-  const today = new Date().toLocaleDateString("sv-SE");
-  const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString("sv-SE");
-  const label = (d: string) => {
-    const w = new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
+  const shift = (n: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
+  const goToday = () => {
+    const d = new Date();
+    setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelected(today);
+  };
+  const dayLabel = (d: string) => {
+    const w = new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" });
+    const tomorrow = ymd(new Date(Date.now() + 86400000));
     return d === today ? `오늘 · ${w}` : d === tomorrow ? `내일 · ${w}` : w;
   };
 
+  const Entry = ({ e }: { e: DayEntry }) => (
+    <li className={`ev ${e.kind}`} onClick={() => e.itemId && props.onOpen(e.itemId)}>
+      <span className="ev-bar" />
+      <span className="ev-time">{e.time ? e.time : "종일"}</span>
+      <span className="ev-title">{e.title}</span>
+      {e.kind === "todo" && <span className="tag">할 일</span>}
+    </li>
+  );
+
   return (
-    <section>
-      {header}
-      {!days.has(today) && (
-        <div className="day">
-          <h3 className="today">{label(today)}</h3>
-          <p className="muted small none">오늘은 일정이 없어요.</p>
+    <section className="calendar">
+      <header className="page-head">
+        <h1>캘린더</h1>
+        <div className="seg" role="tablist">
+          <button role="tab" aria-selected={mode === "month"} className={mode === "month" ? "on" : ""} onClick={() => setMode("month")}>
+            월
+          </button>
+          <button role="tab" aria-selected={mode === "list"} className={mode === "list" ? "on" : ""} onClick={() => setMode("list")}>
+            목록
+          </button>
+        </div>
+      </header>
+
+      {!props.calOn && (
+        <div className="banner">
+          <span className="grow">{props.linked ? "구글 캘린더 연결 시간이 끝났어요." : "지금은 할 일만 보여요. 구글 캘린더를 연결하면 일정도 함께 보여요."}</span>
+          {gcal.available() ? (
+            <button className="btn small" onClick={props.onConnect}>
+              {props.linked ? "다시 연결" : "연결"}
+            </button>
+          ) : (
+            <button className="btn small tonal" onClick={props.onGoSettings}>
+              설정
+            </button>
+          )}
         </div>
       )}
-      {[...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([d, evs]) => (
-        <div key={d} className="day">
-          <h3 className={d === today ? "today" : ""}>{label(d)}</h3>
-          <ul className="evs">
-            {evs.map((e) => (
-              <li key={e.id} className={e.itemId ? "mine" : ""} onClick={() => e.itemId && props.onOpen(e.itemId)}>
-                <span className="when">{e.time ? e.time : "종일"}</span>
-                <span className="grow">{e.title}</span>
-                {e.itemId && <span className="badge">할 일</span>}
-              </li>
+
+      {mode === "month" ? (
+        <>
+          <div className="month-nav">
+            <h2>
+              {month.getFullYear()}년 {month.getMonth() + 1}월
+            </h2>
+            <div className="month-btns">
+              {loading && <span className="spinner" aria-label="불러오는 중" />}
+              <button className="btn small tonal" onClick={goToday}>
+                오늘
+              </button>
+              <button className="icon-btn" aria-label="이전 달" onClick={() => shift(-1)}>
+                <IconLeft />
+              </button>
+              <button className="icon-btn" aria-label="다음 달" onClick={() => shift(1)}>
+                <IconRight />
+              </button>
+            </div>
+          </div>
+          <div className="grid-head">
+            {WEEK.map((w, i) => (
+              <span key={w} className={i === 0 ? "sun" : i === 6 ? "sat" : ""}>
+                {w}
+              </span>
             ))}
-          </ul>
+          </div>
+          <div className="grid">
+            {cells.map((d) => {
+              const k = ymd(d);
+              const list = byDay.get(k) ?? [];
+              const out = d.getMonth() !== month.getMonth();
+              return (
+                <button
+                  key={k}
+                  className={`cell ${out ? "out" : ""} ${k === selected ? "sel" : ""} ${k === today ? "today" : ""} ${d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""}`}
+                  onClick={() => {
+                    setSelected(k);
+                    if (out) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+                  }}
+                >
+                  <span className="num">{d.getDate()}</span>
+                  {list.slice(0, 2).map((e) => (
+                    <span key={e.key} className={`chip-ev ${e.kind}`}>
+                      {e.title}
+                    </span>
+                  ))}
+                  {list.length > 2 && <span className="more">+{list.length - 2}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="day-panel">
+            <h3>{dayLabel(selected)}</h3>
+            {(byDay.get(selected) ?? []).length ? (
+              <ul className="evlist">
+                {byDay.get(selected)!.map((e) => (
+                  <Entry key={e.key} e={e} />
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small">일정이 없어요.</p>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="agenda">
+          {[...byDay.entries()]
+            .filter(([d]) => d >= today && d < ymd(rangeTo))
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([d, list]) => (
+              <div key={d} className="day-panel">
+                <h3 className={d === today ? "is-today" : ""}>{dayLabel(d)}</h3>
+                <ul className="evlist">
+                  {list.map((e) => (
+                    <Entry key={e.key} e={e} />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          {byDay.size === 0 && <p className="muted">앞으로 30일 동안 일정이 없어요.</p>}
         </div>
-      ))}
-      <p className="muted small">앞으로 30일 일정이에요.</p>
+      )}
     </section>
   );
 }

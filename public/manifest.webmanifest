@@ -1,4 +1,4 @@
 { "name": "내 비서", "short_name": "내 비서", "start_url": "./", "display": "standalone",
-  "background_color": "#f6f5f2", "theme_color": "#d9632b",
+  "background_color": "#f6f7f9", "theme_color": "#f6f7f9",
   "icons": [ { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml" },
              { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" } ] }

@@ -122,9 +122,13 @@ export type CalEvent = {
 export async function upcoming(token: string, days = 30): Promise<CalEvent[]> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  return range(token, today, new Date(today.getTime() + days * 86400000));
+}
+
+export async function range(token: string, from: Date, to: Date): Promise<CalEvent[]> {
   const q = new URLSearchParams({
-    timeMin: today.toISOString(),
-    timeMax: new Date(today.getTime() + days * 86400000).toISOString(),
+    timeMin: from.toISOString(),
+    timeMax: to.toISOString(),
     singleEvents: "true",
     orderBy: "startTime",
     maxResults: "250",
