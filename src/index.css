@@ -1,14 +1,14 @@
 :root {
   --bg: #f6f5f2; --surface: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e6e4df;
-  --accent: #d9632b; --accent-soft: #fbeee6; --warn: #e0a100; --danger: #c43d3d;
+  --accent: #d9632b; --accent-soft: #fbeee6; --warn: #e0a100; --danger: #c43d3d; --ok: #2f8a4e;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --bg: #161615; --surface: #222220; --text: #f2f1ee; --muted: #9b9a95; --line: #34332f;
-    --accent: #f08a52; --accent-soft: #3a2a20; color-scheme: dark; }
+    --accent: #f08a52; --accent-soft: #3a2a20; --ok: #5cc27f; color-scheme: dark; }
 }
 :root[data-theme="dark"] { --bg: #161615; --surface: #222220; --text: #f2f1ee; --muted: #9b9a95; --line: #34332f;
-  --accent: #f08a52; --accent-soft: #3a2a20; color-scheme: dark; }
+  --accent: #f08a52; --accent-soft: #3a2a20; --ok: #5cc27f; color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", sans-serif;
@@ -129,3 +129,26 @@ label.check input { width: auto; }
 .steps { margin: 4px 0; padding-left: 20px; display: grid; gap: 10px; font-size: 14px; line-height: 1.55; }
 .steps a { color: var(--accent); }
 textarea.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; margin-top: 6px; resize: vertical; }
+.menu { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.menu li { display: flex; align-items: center; gap: 12px; padding: 16px; border-top: 1px solid var(--line); cursor: pointer; }
+.menu li:first-child { border-top: 0; }
+.menu .grow { display: grid; gap: 3px; }
+.status { font-size: 13px; color: var(--muted); }
+.status.on { color: var(--ok); font-weight: 600; }
+.sub-head { display: grid; gap: 4px; margin-bottom: 16px; }
+.sub-head .ghost { justify-self: start; padding-left: 0; }
+.panel { display: grid; gap: 12px; }
+.panel label { margin-top: 8px; color: var(--muted); font-size: 14px; }
+.panel .add { margin: 0; }
+.panel a { color: var(--accent); }
+.keybox { display: flex; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+.keybox .grow { display: grid; gap: 2px; }
+.dot-big { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex: 0 0 12px; opacity: .5; }
+.keybox.on .dot-big { background: var(--ok); opacity: 1; }
+.check { font-size: 14px; margin: 0; } .check.ok { color: var(--ok); } .check.fail { color: var(--danger); } .check.checking { color: var(--muted); }
+button.danger-text { color: var(--danger); }
+button.google { background: var(--surface); color: var(--text); border: 1px solid var(--line); display: inline-flex; gap: 10px; align-items: center; justify-content: center; font-weight: 600; padding: 12px; }
+.google .g { font-weight: 800; color: #4285f4; font-size: 18px; }
+.reconnect { width: 100%; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.empty h2 { color: var(--text); font-size: 22px; margin: 0; }
+.homechat { min-height: calc(100dvh - 110px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }

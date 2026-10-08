@@ -286,6 +286,12 @@ const Briefing = z.object({
 });
 export type Briefing = z.infer<typeof Briefing>;
 
+// 저장한 API 키로 Claude에 닿는지 확인한다. 토큰을 쓰지 않는 모델 조회로 확인.
+export async function checkKey(s: Settings): Promise<string> {
+  const m = await client(s).models.retrieve(s.model);
+  return m.display_name;
+}
+
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
   const itemsText = open

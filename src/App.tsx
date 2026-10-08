@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_SETTINGS, dueLabel, daysUntil, uid, usePersisted } from "./store";
 import type { Action, Item, Msg, Settings } from "./store";
-import { homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
-import type { Briefing, ToolRunner } from "./ai";
+import { checkKey, homeChat, streamChat } from "./ai";
+import type { ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
@@ -17,22 +17,40 @@ export default function App() {
   const [homeChat, setHomeChat] = usePersisted<Msg[]>("homeChat", []);
   const [view, setView] = useState<View>({ name: "home" });
   const [events, setEvents] = useState<CalEvent[]>([]);
-  const cal: gcal.CalConfig = { url: settings.calendarUrl, key: settings.calendarKey };
-  const calOn = !!settings.calendarUrl;
+  const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
+  const [linked, setLinked] = useState(() => gcal.wasLinked());
+  const calOn = !!gToken;
 
-  // 캘린더 연결용 키는 처음 한 번 만들어 둔다.
+  // 구글 로그인 스크립트를 미리 불러 두어야 버튼을 눌렀을 때 바로 창이 뜬다.
   useEffect(() => {
-    if (!settings.calendarKey) setSettings((s) => ({ ...s, calendarKey: gcal.newKey() }));
-  }, [settings.calendarKey, setSettings]);
+    if (gcal.available()) gcal.preload().catch(() => {});
+  }, []);
 
   const loadEvents = useCallback(() => {
-    if (!settings.calendarUrl) return setEvents([]);
+    if (!gToken) return setEvents([]);
     gcal
-      .upcoming({ url: settings.calendarUrl, key: settings.calendarKey })
+      .upcoming(gToken)
       .then(setEvents)
-      .catch((e) => toast((e as Error).message));
-  }, [settings.calendarUrl, settings.calendarKey]);
+      .catch((e) => {
+        setGToken(gcal.savedToken());
+        toast((e as Error).message);
+      });
+  }, [gToken]);
   useEffect(loadEvents, [loadEvents]);
+
+  const connectCalendar = async () => {
+    try {
+      setGToken(await gcal.signIn());
+      setLinked(true);
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
+  const disconnectCalendar = () => {
+    gcal.signOut();
+    setGToken(null);
+    setLinked(false);
+  };
 
   // 대화 중 도구가 연달아 실행될 때 최신 목록을 바로 보도록 ref에도 들고 있는다.
   const itemsRef = useRef(items);
@@ -112,7 +130,12 @@ export default function App() {
       };
     }
     const x = input as { title: string; date?: string; start?: string; end?: string };
-    await gcal.addEvent(cal, x);
+    const token = gcal.savedToken();
+    if (!token) {
+      setGToken(null);
+      throw new Error("캘린더 연결이 만료됐어요. 사용자가 '캘린더 다시 연결'을 눌러야 해요.");
+    }
+    await gcal.addEvent(token, x);
     loadEvents();
     const when = x.start ? new Date(x.start).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : x.date;
     return { result: "캘린더에 넣음.", action: { kind: "event", text: `캘린더에 추가: ${x.title} (${when})` } };
@@ -138,11 +161,12 @@ export default function App() {
             events={events}
             settings={settings}
             calOn={calOn}
+            calExpired={linked && !gToken && gcal.available()}
+            onReconnect={connectCalendar}
             chat={homeChat}
             setChat={setHomeChat}
             runTool={runTool}
             onUndo={undo}
-            onOpen={open}
             onGoSettings={() => setView({ name: "settings" })}
           />
         )}
@@ -150,7 +174,7 @@ export default function App() {
         {view.name === "item" && current && (
           <ItemView
             item={current}
-            cal={calOn ? cal : null}
+            gToken={gToken}
             onChat={() => setView({ name: "chat", id: current.id })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
@@ -163,7 +187,9 @@ export default function App() {
         {view.name === "chat" && current && (
           <ChatView item={current} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
-        {view.name === "settings" && <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} eventsCount={events.length} onTest={loadEvents} />}
+        {view.name === "settings" && (
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
+        )}
       </main>
       {view.name !== "chat" && (
         <nav className="tabs">
@@ -184,40 +210,25 @@ export default function App() {
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
 
-let briefingCache: { at: number; brief: Briefing } | null = null;
-
 function HomeChat(props: {
   items: Item[];
   events: CalEvent[];
   settings: Settings;
   calOn: boolean;
+  calExpired: boolean;
+  onReconnect: () => void;
   chat: Msg[];
   setChat: (fn: (m: Msg[]) => Msg[]) => void;
   runTool: ToolRunner;
   onUndo: (a: Action) => void;
-  onOpen: (id: string) => void;
   onGoSettings: () => void;
 }) {
   const { items, events, settings, chat, setChat } = props;
-  const [brief, setBrief] = useState<Briefing>(() => briefingCache?.brief ?? simpleBriefing(items));
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
-
-  // 30분에 한 번만 Claude에게 "지금 할 일"을 다시 물어본다.
-  useEffect(() => {
-    if (!settings.apiKey) return setBrief(simpleBriefing(items));
-    if (briefingCache && Date.now() - briefingCache.at < 30 * 60000) return;
-    makeBriefing(settings, items, events)
-      .then((b) => {
-        briefingCache = { at: Date.now(), brief: b };
-        setBrief(b);
-      })
-      .catch(() => setBrief(simpleBriefing(items)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.apiKey, events.length]);
 
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [chat.length, streaming]);
   useLayoutEffect(() => {
@@ -237,7 +248,6 @@ function HomeChat(props: {
     setChat((c) => [...c, { role: "user", text, ts: Date.now() }]);
     try {
       const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool);
-      briefingCache = null;
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
       setChat((c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]);
@@ -259,38 +269,19 @@ function HomeChat(props: {
 
   return (
     <section className="homechat">
-      <header className="home-head">
-        <p className="muted small">{new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" })}</p>
-        <h1>{greet}</h1>
-      </header>
-
-      <div className="now-strip" onClick={() => props.onOpen(brief.now.item_id)}>
-        <p className="label">지금 할 일</p>
-        <strong>{brief.now.title}</strong>
-        <p className="muted small">{brief.now.reason}</p>
-        {brief.updates.length > 0 && (
-          <ul>
-            {brief.updates.slice(0, 2).map((u, i) => (
-              <li
-                key={i}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onOpen(u.item_id);
-                }}
-              >
-                {u.text}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {props.calExpired && (
+        <button className="reconnect" onClick={props.onReconnect}>
+          캘린더 연결이 끝났어요 · 다시 연결
+        </button>
+      )}
 
       <div className="thread">
         {chat.length === 0 && !busy && (
           <div className="empty">
+            <h2>{greet}</h2>
             <p>일정이나 할 일을 그냥 말해 주세요. 알아서 할 일 목록에 정리할게요.</p>
             <div className="chips">
-              {["내일 오후 3시 치과 예약", "지금 뭐 하면 좋을까?", "이번 주 할 일 정리해 줘"].map((t) => (
+              {["지금 뭐 하면 좋을까?", "내일 오후 3시 치과 예약", "이번 주 일정 알려 줘"].map((t) => (
                 <button key={t} className="chip" onClick={() => send(t)} disabled={!settings.apiKey}>
                   {t}
                 </button>
@@ -316,7 +307,7 @@ function HomeChat(props: {
                   {m.actions.map((a, j) => (
                     <div key={j} className={`act ${a.undone ? "undone" : ""}`}>
                       <span className="tick">{a.undone ? "↩" : "✓"}</span>
-                      <span className="grow" onClick={() => !a.undone && a.undo && props.onOpen(a.undo.itemId)}>
+                      <span className="grow">
                         {a.text}
                       </span>
                       {a.undo && !a.undone && (
@@ -475,7 +466,7 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
 
 function ItemView(props: {
   item: Item;
-  cal: gcal.CalConfig | null;
+  gToken: string | null;
   update: (fn: (it: Item) => Item) => void;
   onDelete: () => void;
   onBack: () => void;
@@ -490,12 +481,12 @@ function ItemView(props: {
 
   const addToCalendar = async () => {
     if (!item.due) return;
-    if (!props.cal) {
+    if (!props.gToken) {
       window.open(gcal.addLink(item.title, item.due), "_blank");
       return;
     }
     try {
-      const id = await gcal.addEvent(props.cal, { title: `⏰ ${item.title}`, date: item.due });
+      const id = await gcal.addEvent(props.gToken, { title: `⏰ ${item.title}`, date: item.due });
       update((it) => ({ ...it, calendarEventId: id }));
       toast("캘린더에 마감일을 넣었어요.");
     } catch (e) {
@@ -716,34 +707,180 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
 
 /* ---------------- 설정 ---------------- */
 
-function SettingsView(props: { settings: Settings; setSettings: (s: Settings) => void; calOn: boolean; eventsCount: number; onTest: () => void }) {
-  const { settings, setSettings } = props;
-  const set = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setSettings({ ...settings, [k]: e.target.value });
+type SettingsPage = "main" | "claude" | "calendar" | "data";
+
+function SettingsView(props: {
+  settings: Settings;
+  setSettings: (s: Settings) => void;
+  calOn: boolean;
+  linked: boolean;
+  eventsCount: number;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const [page, setPage] = useState<SettingsPage>("main");
+  const { settings } = props;
+  const keyTail = settings.apiKey ? `…${settings.apiKey.slice(-4)}` : "";
+
+  if (page === "main")
+    return (
+      <section className="settings">
+        <header className="page-head">
+          <h1>설정</h1>
+        </header>
+        <ul className="menu">
+          <li onClick={() => setPage("claude")}>
+            <span className="grow">
+              <strong>Claude 연결</strong>
+              <span className={`status ${settings.apiKey ? "on" : ""}`}>{settings.apiKey ? `API 키 저장됨 ${keyTail}` : "API 키 없음"}</span>
+            </span>
+            <span className="chev">›</span>
+          </li>
+          <li onClick={() => setPage("calendar")}>
+            <span className="grow">
+              <strong>구글 캘린더</strong>
+              <span className={`status ${props.calOn ? "on" : ""}`}>{props.calOn ? "연결됨" : props.linked ? "다시 연결 필요" : "연결 안 됨"}</span>
+            </span>
+            <span className="chev">›</span>
+          </li>
+          <li onClick={() => setPage("data")}>
+            <span className="grow">
+              <strong>데이터 백업</strong>
+              <span className="status">내려받기, 불러오기</span>
+            </span>
+            <span className="chev">›</span>
+          </li>
+        </ul>
+      </section>
+    );
+
+  const titles = { claude: "Claude 연결", calendar: "구글 캘린더", data: "데이터 백업" };
   return (
     <section className="settings">
-      <header className="page-head">
-        <h1>설정</h1>
+      <header className="sub-head">
+        <button className="ghost" onClick={() => setPage("main")}>
+          ← 설정
+        </button>
+        <h1>{titles[page]}</h1>
       </header>
+      {page === "claude" && <ClaudeSettings settings={settings} setSettings={props.setSettings} />}
+      {page === "calendar" && <CalendarSettings {...props} />}
+      {page === "data" && <DataSettings />}
+    </section>
+  );
+}
 
-      <h3>Claude 연결</h3>
+function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSettings: (s: Settings) => void }) {
+  const [draft, setDraft] = useState("");
+  const [check, setCheck] = useState<{ state: "idle" | "checking" | "ok" | "fail"; text: string }>({ state: "idle", text: "" });
+
+  const runCheck = async (s: Settings) => {
+    setCheck({ state: "checking", text: "확인하는 중…" });
+    try {
+      const name = await checkKey(s);
+      setCheck({ state: "ok", text: `Claude와 연결됐어요 (${name})` });
+    } catch (e) {
+      const msg = (e as { status?: number }).status === 401 ? "키가 올바르지 않아요. 다시 복사해 넣어 주세요." : (e as Error).message;
+      setCheck({ state: "fail", text: msg });
+    }
+  };
+
+  const save = () => {
+    const key = draft.trim();
+    if (!key) return;
+    const next = { ...settings, apiKey: key };
+    setSettings(next);
+    setDraft("");
+    toast("API 키를 저장했어요.");
+    runCheck(next);
+  };
+
+  return (
+    <div className="panel">
+      <div className={`keybox ${settings.apiKey ? "on" : ""}`}>
+        <span className="dot-big" />
+        <div className="grow">
+          <strong>{settings.apiKey ? "API 키가 저장돼 있어요" : "저장된 API 키가 없어요"}</strong>
+          {settings.apiKey && <span className="muted small">sk-ant-…{settings.apiKey.slice(-4)} · 이 기기에만 저장</span>}
+        </div>
+      </div>
+      {settings.apiKey && (
+        <div className="row">
+          <button className="secondary" onClick={() => runCheck(settings)} disabled={check.state === "checking"}>
+            연결 확인
+          </button>
+          <button
+            className="secondary danger-text"
+            onClick={() => {
+              setSettings({ ...settings, apiKey: "" });
+              setCheck({ state: "idle", text: "" });
+            }}
+          >
+            키 지우기
+          </button>
+        </div>
+      )}
+      {check.state !== "idle" && <p className={`check ${check.state}`}>{check.state === "ok" ? "✓ " : check.state === "fail" ? "✕ " : ""}{check.text}</p>}
+
+      <label htmlFor="apikey">{settings.apiKey ? "새 키로 바꾸기" : "API 키 넣기"}</label>
+      <div className="add">
+        <input id="apikey" type="password" placeholder="sk-ant-..." value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
+        <button onClick={save} disabled={!draft.trim()}>
+          저장
+        </button>
+      </div>
       <p className="muted small">
-        console.anthropic.com 에서 만든 API 키를 넣어 주세요. 키는 이 기기에만 저장되고 다른 곳으로 보내지 않아요.
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+          console.anthropic.com
+        </a>
+        에서 키를 만들 수 있어요. 키는 이 기기에만 저장되고 Anthropic 말고는 어디에도 보내지 않아요.
       </p>
-      <input type="password" placeholder="sk-ant-..." value={settings.apiKey} onChange={set("apiKey")} />
-      <label>
-        모델
-        <select value={settings.model} onChange={set("model")}>
-          <option value="claude-opus-5-5">Claude Opus 5.5 (가장 똑똑함)</option>
-          <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (빠르고 저렴)</option>
-          <option value="claude-haiku-5-5">Claude Haiku 5.5 (가장 저렴)</option>
-        </select>
-      </label>
 
-      <h3>구글 캘린더</h3>
-      <CalendarSetup settings={settings} setSettings={setSettings} calOn={props.calOn} eventsCount={props.eventsCount} onTest={props.onTest} />
+      <label htmlFor="model">모델</label>
+      <select id="model" value={settings.model} onChange={(e) => setSettings({ ...settings, model: e.target.value })}>
+        <option value="claude-opus-5-5">Claude Opus 5.5 (가장 똑똑함)</option>
+        <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (빠르고 저렴)</option>
+        <option value="claude-haiku-5-5">Claude Haiku 5.5 (가장 저렴)</option>
+      </select>
+    </div>
+  );
+}
 
-      <h3>데이터</h3>
-      <p className="muted small">지금은 할 일이 이 기기의 브라우저에만 저장돼요.</p>
+function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount: number; onConnect: () => void; onDisconnect: () => void }) {
+  if (!gcal.available())
+    return (
+      <div className="panel">
+        <p>구글 로그인 버튼을 쓰려면 앱을 구글에 한 번 등록해야 해요. 등록이 끝나면 여기서 "구글로 연결" 버튼 하나로 연결돼요.</p>
+        <p className="muted small">지금도 할 일 화면의 "캘린더에 넣기"를 누르면 구글 캘린더 일정 추가 화면이 열려요.</p>
+      </div>
+    );
+  return (
+    <div className="panel">
+      <div className={`keybox ${props.calOn ? "on" : ""}`}>
+        <span className="dot-big" />
+        <div className="grow">
+          <strong>{props.calOn ? "구글 캘린더에 연결돼 있어요" : props.linked ? "연결 시간이 끝났어요" : "연결 안 됨"}</strong>
+          {props.calOn && <span className="muted small">앞으로 7일 일정 {props.eventsCount}개</span>}
+        </div>
+      </div>
+      {props.calOn ? (
+        <button className="secondary danger-text" onClick={props.onDisconnect}>
+          연결 끊기
+        </button>
+      ) : (
+        <button className="google" onClick={props.onConnect}>
+          <span className="g">G</span> 구글로 연결
+        </button>
+      )}
+      <p className="muted small">서버 없이 이 기기에서만 연결하기 때문에 연결은 1시간마다 끝나요. 그때 비서 화면 위에 뜨는 "다시 연결"을 한 번 누르면 돼요.</p>
+    </div>
+  );
+}
+
+function DataSettings() {
+  return (
+    <div className="panel">
+      <p className="muted small">지금은 할 일이 이 기기의 브라우저에만 저장돼요. 기기를 바꾸거나 다른 기기로 옮길 때 백업을 쓰세요.</p>
       <div className="row">
         <button
           className="secondary"
@@ -777,63 +914,6 @@ function SettingsView(props: { settings: Settings; setSettings: (s: Settings) =>
           />
         </label>
       </div>
-    </section>
-  );
-}
-
-function CalendarSetup(props: { settings: Settings; setSettings: (s: Settings) => void; calOn: boolean; eventsCount: number; onTest: () => void }) {
-  const { settings, setSettings } = props;
-  const [open, setOpen] = useState(!props.calOn);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(gcal.SCRIPT(settings.calendarKey));
-      toast("스크립트를 복사했어요.");
-    } catch {
-      toast("복사하지 못했어요. 아래 글상자에서 직접 복사해 주세요.");
-    }
-  };
-  return (
-    <div className="calsetup">
-      {props.calOn && (
-        <p className="ok">
-          연결됨 · 앞으로 7일 일정 {props.eventsCount}개{" "}
-          <button className="link small" onClick={props.onTest}>
-            다시 불러오기
-          </button>
-        </p>
-      )}
-      <p className="muted small">구글 클라우드 설정 없이, 내 구글 계정에 작은 스크립트를 하나 붙여서 연결해요. 처음 한 번만 하면 돼요.</p>
-      {props.calOn && !open ? (
-        <button className="link" onClick={() => setOpen(true)}>
-          연결 방법 다시 보기
-        </button>
-      ) : (
-        <ol className="steps">
-          <li>
-            컴퓨터에서 <a href="https://script.google.com/home/projects/create" target="_blank" rel="noreferrer">script.google.com 새 프로젝트</a>를 열어요.
-          </li>
-          <li>
-            안에 있는 코드를 모두 지우고 아래 스크립트를 붙여 넣은 뒤 저장해요.
-            <div className="row">
-              <button className="secondary small" onClick={copy}>
-                스크립트 복사
-              </button>
-            </div>
-            <textarea readOnly className="code" rows={4} value={gcal.SCRIPT(settings.calendarKey)} onFocus={(e) => e.target.select()} />
-          </li>
-          <li>
-            오른쪽 위 <b>배포 → 새 배포</b> → 유형 <b>웹 앱</b>, 실행 사용자 <b>나</b>, 액세스 권한 <b>모든 사용자</b>로 배포해요. 권한 확인 창이 뜨면 허용해요.
-          </li>
-          <li>나온 웹 앱 URL(…/exec로 끝나는 주소)을 아래에 붙여 넣어요.</li>
-        </ol>
-      )}
-      <input
-        placeholder="https://script.google.com/macros/s/…/exec"
-        value={settings.calendarUrl}
-        onChange={(e) => setSettings({ ...settings, calendarUrl: e.target.value.trim() })}
-      />
-      <p className="muted small">스크립트 안의 비밀 키가 이 기기 앱과 맞아야만 캘린더가 열려요. 다른 기기에서 쓸 때는 같은 주소와 함께 아래 키도 똑같이 맞춰 주세요.</p>
-      <input value={settings.calendarKey} onChange={(e) => setSettings({ ...settings, calendarKey: e.target.value.trim() })} aria-label="캘린더 비밀 키" />
     </div>
   );
 }

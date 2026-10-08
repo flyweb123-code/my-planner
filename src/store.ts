@@ -21,9 +21,9 @@ export type Item = {
   chat: Msg[];
   calendarEventId?: string;
 };
-export type Settings = { apiKey: string; model: string; calendarUrl: string; calendarKey: string };
+export type Settings = { apiKey: string; model: string };
 
-export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "claude-opus-5-5", calendarUrl: "", calendarKey: "" };
+export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "claude-opus-5-5" };
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
