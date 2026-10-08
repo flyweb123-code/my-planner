@@ -57,8 +57,16 @@ export async function streamChat(
   s: Settings,
   item: Item,
   onText: (textSoFar: string) => void,
+  subId?: string,
 ): Promise<{ text: string; suggestions: Suggestion[] }> {
-  const history = item.chat.slice(-30).map((m) => ({ role: m.role, content: m.text }));
+  const sub = subId ? item.subtasks.find((x) => x.id === subId) : undefined;
+  const history = (sub ? sub.chat ?? [] : item.chat).slice(-30).map((m) => ({ role: m.role, content: m.text }));
+  const focus = sub
+    ? "\n\n지금 대화는 이 할 일 전체가 아니라 그 안의 세부 업무 하나에 대한 것이다. " +
+      "사용자와 함께 이 세부 업무를 어떻게, 언제, 무엇으로 할지 구체적으로 정해 준다. " +
+      "더 잘게 나눌 일이 있으면 suggest_subtasks로 제안하면 같은 할 일의 세부 업무로 추가된다.\n" +
+      `지금 다루는 세부 업무: ${sub.title}${sub.done ? " (완료됨)" : ""}`
+    : "";
   const stream = client(s).messages.stream({
     model: s.model,
     max_tokens: 64000,
@@ -67,7 +75,7 @@ export async function streamChat(
       "너는 사용자의 개인 비서이자 대화 상대다. 사용자는 앞으로 할 일 하나에 대해 너와 편하게 이야기한다. " +
       "Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
       "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. 도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
-      `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item)}`,
+      `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item)}${focus}`,
     tools: [suggestTool],
     tool_choice: { type: "auto" },
     messages: history,

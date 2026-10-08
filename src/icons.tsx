@@ -51,3 +51,15 @@ export const IconRefresh = () => (
     <path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4.5h-4.5" />
   </svg>
 );
+export const IconMore = () => (
+  <svg {...base} aria-hidden="true">
+    <circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+  </svg>
+);
+export const IconCheck = () => (
+  <svg {...base} strokeWidth={2.4} aria-hidden="true">
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </svg>
+);

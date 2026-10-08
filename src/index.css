@@ -262,3 +262,50 @@ input.switch { appearance: none; -webkit-appearance: none; width: 46px; height: 
 input.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .2s; }
 input.switch:checked { background: var(--ok); }
 input.switch:checked::after { transform: translateX(18px); }
+
+/* ---------- 할 일 상세: Claude 프로젝트처럼 ---------- */
+.detail .page-head { margin-bottom: 8px; }
+.menu-wrap { position: relative; }
+.popover { position: absolute; right: 0; top: calc(100% + 6px); min-width: 180px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); padding: 6px; display: grid; z-index: 10; }
+.popover button { background: none; color: var(--text); text-align: left; padding: 11px 12px; border-radius: 10px; font-weight: 500; }
+.popover button:hover { background: var(--surface-2); }
+.popover button.danger { color: var(--danger); }
+.meta-line { display: inline-flex; align-items: center; gap: 6px; background: none; color: var(--muted); font-size: 14px; font-weight: 500; padding: 2px 0; margin: 0 0 4px; }
+.meta-line .chev svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .2s; }
+.meta-line .chev.up svg { transform: rotate(-90deg); }
+.pill-done { background: var(--todo-soft); color: var(--todo); font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.field.memo { padding: 4px 6px; }
+.field.memo textarea { border: 0; background: none; padding: 10px; min-height: 70px; }
+
+.ask { display: flex; align-items: flex-end; gap: 8px; margin: 18px 0 10px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); }
+.ask textarea { border: 0; background: none; resize: none; min-height: 44px; padding: 10px 12px; }
+.resume { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; font-weight: 400; }
+.resume > svg { width: 20px; height: 20px; color: var(--accent); flex: 0 0 auto; }
+.resume .grow, .threads .grow { display: grid; gap: 2px; min-width: 0; }
+.resume strong { font-weight: 600; font-size: 15px; }
+.preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+
+.section-head { display: flex; justify-content: space-between; align-items: baseline; margin: 26px 2px 10px; }
+.section-head h3 { margin: 0; }
+.threads { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.threads > li + li { border-top: 1px solid var(--line); }
+.swipe { position: relative; overflow: hidden; }
+.swipe-actions { position: absolute; right: 0; top: 0; bottom: 0; display: flex; }
+.swipe-actions button { flex: 1; border-radius: 0; color: #fff; font-weight: 600; font-size: 14px; padding: 0; }
+.swipe-actions .ok { background: var(--ok); }
+.swipe-actions .danger { background: var(--danger); }
+.swipe-body { position: relative; display: flex; align-items: center; gap: 12px; padding: 13px 16px; background: var(--surface); cursor: pointer; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.swipe-body .t { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swipe-body .t.done { color: var(--faint); text-decoration: line-through; }
+.tick { width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center; margin-left: -4px; }
+.tick:not(.on)::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.tick.on { background: var(--todo-soft); color: var(--todo); }
+.tick.on svg { width: 13px; height: 13px; }
+.count { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-2); border-radius: 999px; padding: 2px 8px; }
+.add-row { display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 14px; color: var(--faint); }
+.add-row svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.add-row input { border: 0; background: none; padding: 10px 4px; }
+.hint { margin: 10px 4px; }
+.pill-toggle { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; background: var(--surface-2); color: var(--text); padding: 7px 12px; font-size: 13px; }
+.pill-toggle.on { background: var(--todo-soft); color: var(--todo); }
+.pill-toggle svg { width: 14px; height: 14px; }

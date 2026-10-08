@@ -7,10 +7,10 @@ import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconLeft, IconList, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconLeft, IconList, IconMore, IconPlus, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string } | { name: "calendar" } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -225,7 +225,7 @@ export default function App() {
           <ItemView
             item={current}
             gToken={gToken}
-            onChat={() => setView({ name: "chat", id: current.id })}
+            onChat={(sub, initial) => setView({ name: "chat", id: current.id, sub, initial })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
               setItems((all) => all.filter((i) => i.id !== current.id));
@@ -235,7 +235,7 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView item={current} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
           <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
@@ -575,109 +575,260 @@ function ItemView(props: {
   update: (fn: (it: Item) => Item) => void;
   onDelete: () => void;
   onBack: () => void;
-  onChat: () => void;
+  onChat: (subId?: string, initial?: string) => void;
 }) {
   const { item, update } = props;
   const [newSub, setNewSub] = useState("");
+  const [ask, setAsk] = useState("");
+  const [menu, setMenu] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [swiped, setSwiped] = useState<string | null>(null);
 
   const addSub = (title: string) =>
     update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
+  const toggleSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
+  const removeSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== id) }));
 
+  const doneCount = item.subtasks.filter((s) => s.done).length;
   const last = item.chat[item.chat.length - 1];
+  const plain = (t: string) => t.replace(/[*`#]/g, "");
+  const metaBits = [
+    item.due ? dueLabel(item.due) + (item.time ? ` ${item.time}` : "") : "마감 없음",
+    item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "",
+    item.due && props.gToken ? (item.calendarEventId ? "캘린더에 있음" : "캘린더에 올리는 중") : "",
+  ].filter(Boolean);
+
+  const startAsk = () => {
+    const t = ask.trim();
+    if (!t) return;
+    setAsk("");
+    props.onChat(undefined, t);
+  };
 
   return (
-    <section className="detail">
+    <section className="detail" onClick={() => (setSwiped(null), setMenu(false))}>
       <header className="page-head">
         <button className="back" onClick={props.onBack}>
           <IconBack />
           할 일
         </button>
-        <button className="ghost danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))} onBlur={() => setConfirmDel(false)}>
-          {confirmDel ? "한 번 더 누르면 삭제" : "삭제"}
-        </button>
+        <div className="menu-wrap">
+          <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
+            <IconMore />
+          </button>
+          {menu && (
+            <div className="popover" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => (update((it) => ({ ...it, done: !it.done })), setMenu(false))}>{item.done ? "완료 취소" : "완료로 표시"}</button>
+              <button className="danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))}>
+                {confirmDel ? "한 번 더 누르면 삭제" : "할 일 삭제"}
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       <input className="title-input" value={item.title} onChange={(e) => update((it) => ({ ...it, title: e.target.value }))} />
-      <div className="fields">
-        <div className="field">
-          <span>마감</span>
-          <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
-        </div>
-        {item.due && (
+      <button className={`meta-line ${item.done ? "is-done" : ""}`} onClick={() => setShowInfo(!showInfo)}>
+        {item.done && <span className="pill-done">완료</span>}
+        {metaBits.join(" · ")}
+        <span className={`chev small ${showInfo ? "up" : ""}`}><IconRight /></span>
+      </button>
+
+      {showInfo && (
+        <div className="fields">
           <div className="field">
-            <span>시간</span>
-            <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
+            <span>마감</span>
+            <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
           </div>
-        )}
-        <label className="field">
-          <span>완료</span>
-          <input type="checkbox" className="switch" checked={item.done} onChange={(e) => update((it) => ({ ...it, done: e.target.checked }))} />
-        </label>
-        {item.due && (
-          <div className="field">
-            <span>구글 캘린더</span>
-            {props.gToken ? (
-              <span className={`calbadge ${item.calendarEventId ? "" : "pending"}`}>{item.calendarEventId ? "올라가 있음" : "올리는 중…"}</span>
-            ) : (
+          {item.due && (
+            <div className="field">
+              <span>시간</span>
+              <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
+            </div>
+          )}
+          {item.due && !props.gToken && (
+            <div className="field">
+              <span>구글 캘린더</span>
               <a className="secondary small btnlink" href={gcal.addLink(item.title, item.due)} target="_blank" rel="noreferrer">
                 캘린더에 넣기
               </a>
-            )}
+            </div>
+          )}
+          <div className="field memo">
+            <textarea placeholder="메모 (Claude도 같이 봐요)" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
           </div>
-        )}
-      </div>
-      <textarea placeholder="메모" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
+        </div>
+      )}
 
-      <button className="chat-entry" onClick={props.onChat}>
-        <span className="grow">
-          <strong>Claude와 대화하기</strong>
-          <span className="muted small preview">{last ? `${last.role === "user" ? "나: " : ""}${last.text.replace(/[*`#]/g, "")}` : "이 일에 대해 편하게 이야기해 보세요"}</span>
-        </span>
-        <span className="chev"><IconRight /></span>
-      </button>
-
-      <h3>세부 업무</h3>
-      <ul className="subs">
-        {item.subtasks.map((s) => (
-          <li key={s.id} className={s.done ? "done" : ""}>
-            <input type="checkbox" checked={s.done} onChange={() => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === s.id ? { ...x, done: !x.done } : x)) }))} />
-            <span className="grow">{s.title}</span>
-            {s.byClaude && <span className="badge">Claude</span>}
-            <button className="x" onClick={() => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== s.id) }))}>
-              ×
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="add">
-        <input
-          placeholder="세부 업무 직접 추가"
-          value={newSub}
-          onChange={(e) => setNewSub(e.target.value)}
+      <div className="ask">
+        <textarea
+          rows={1}
+          placeholder="이 일에 대해 Claude에게 물어보기"
+          value={ask}
+          onChange={(e) => setAsk(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && newSub.trim()) {
-              addSub(newSub.trim());
-              setNewSub("");
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              startAsk();
             }
           }}
         />
+        <button className="send" aria-label="보내기" onClick={startAsk} disabled={!ask.trim()}>
+          <IconUp />
+        </button>
       </div>
+      {last && (
+        <button className="resume" onClick={() => props.onChat()}>
+          <IconChat />
+          <span className="grow">
+            <strong>이 일 전체 대화</strong>
+            <span className="preview">{plain(last.text)}</span>
+          </span>
+          <span className="chev"><IconRight /></span>
+        </button>
+      )}
+
+      <div className="section-head">
+        <h3>세부 업무</h3>
+        {item.subtasks.length > 0 && <span className="muted small">왼쪽으로 밀면 완료, 삭제</span>}
+      </div>
+      <ul className="threads">
+        {item.subtasks.map((s) => {
+          const lm = s.chat?.[s.chat.length - 1];
+          return (
+            <SwipeRow
+              key={s.id}
+              open={swiped === s.id}
+              onOpenChange={(o) => setSwiped(o ? s.id : null)}
+              onTap={() => props.onChat(s.id)}
+              actions={[
+                { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
+                { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
+              ]}
+            >
+              <span className={`tick ${s.done ? "on" : ""}`}>{s.done && <IconCheck />}</span>
+              <span className="grow">
+                <span className={`t ${s.done ? "done" : ""}`}>{s.title}</span>
+                <span className="preview">{lm ? plain(lm.text) : s.done ? "완료" : "눌러서 Claude와 정하기"}</span>
+              </span>
+              {s.chat && s.chat.length > 0 && <span className="count">{s.chat.length}</span>}
+            </SwipeRow>
+          );
+        })}
+        <li className="add-row">
+          <IconPlus />
+          <input
+            placeholder="세부 업무 추가"
+            value={newSub}
+            onChange={(e) => setNewSub(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && newSub.trim()) {
+                addSub(newSub.trim());
+                setNewSub("");
+              }
+            }}
+          />
+        </li>
+      </ul>
+      {item.subtasks.length === 0 && <p className="muted small hint">Claude에게 물어보면 필요한 세부 업무를 나눠 줘요.</p>}
     </section>
+  );
+}
+
+/* 왼쪽으로 밀면 뒤에 숨은 버튼이 드러나는 줄 */
+function SwipeRow(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onTap: () => void;
+  actions: { label: string; cls: string; run: () => void }[];
+  children: React.ReactNode;
+}) {
+  const W = 76 * props.actions.length;
+  const [dx, setDx] = useState<number | null>(null);
+  const start = useRef<{ x: number; y: number; base: number; dir?: "h" | "v" } | null>(null);
+  const moved = useRef(false);
+  const offset = dx ?? (props.open ? -W : 0);
+
+  return (
+    <li className="swipe" onClick={(e) => e.stopPropagation()}>
+      <div className="swipe-actions" style={{ width: W }}>
+        {props.actions.map((a) => (
+          <button key={a.label} className={a.cls} onClick={() => (a.run(), props.onOpenChange(false))}>
+            {a.label}
+          </button>
+        ))}
+      </div>
+      <div
+        className="swipe-body"
+        style={{ transform: `translateX(${offset}px)`, transition: dx === null ? "transform .22s ease" : "none" }}
+        onPointerDown={(e) => {
+          start.current = { x: e.clientX, y: e.clientY, base: props.open ? -W : 0 };
+          moved.current = false;
+        }}
+        onPointerMove={(e) => {
+          const s = start.current;
+          if (!s) return;
+          const mx = e.clientX - s.x;
+          const my = e.clientY - s.y;
+          if (!s.dir) {
+            if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+            s.dir = Math.abs(mx) > Math.abs(my) ? "h" : "v";
+            if (s.dir === "h") (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          }
+          if (s.dir !== "h") return;
+          moved.current = true;
+          setDx(Math.max(-W - 30, Math.min(0, s.base + mx)));
+        }}
+        onPointerUp={() => {
+          const s = start.current;
+          start.current = null;
+          if (moved.current && dx !== null) {
+            props.onOpenChange(dx < -W / 2);
+            setDx(null);
+            return;
+          }
+          setDx(null);
+          if (s?.dir === "v") return;
+          if (props.open) props.onOpenChange(false);
+          else props.onTap();
+        }}
+        onPointerCancel={() => {
+          start.current = null;
+          setDx(null);
+        }}
+      >
+        {props.children}
+      </div>
+    </li>
   );
 }
 
 /* ---------------- Claude와 대화 ---------------- */
 
-function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Item) => Item) => void; onBack: () => void }) {
-  const { item, update, settings } = props;
+function ChatView(props: {
+  item: Item;
+  subId?: string;
+  initial?: string;
+  settings: Settings;
+  update: (fn: (it: Item) => Item) => void;
+  onBack: () => void;
+}) {
+  const { item, update, settings, subId } = props;
+  const sub = subId ? item.subtasks.find((s) => s.id === subId) : undefined;
+  const chat = (sub ? sub.chat : item.chat) ?? [];
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
+  const sentInitial = useRef(false);
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [item.chat.length, streaming]);
+  // 이 대화(할 일 전체 또는 세부 업무 하나)의 메시지만 바꾼다.
+  const setChat = (it: Item, fn: (c: Msg[]) => Msg[]): Item =>
+    subId ? { ...it, subtasks: it.subtasks.map((s) => (s.id === subId ? { ...s, chat: fn(s.chat ?? []) } : s)) } : { ...it, chat: fn(it.chat) };
+
+  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [chat.length, streaming]);
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -691,37 +842,47 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
     setMsg("");
     setBusy(true);
     setStreaming("");
-    const withUser: Item = { ...item, chat: [...item.chat, { role: "user", text, ts: Date.now() }] };
+    const withUser = setChat(item, (c) => [...c, { role: "user", text, ts: Date.now() }]);
     update(() => withUser);
     try {
-      const r = await streamChat(settings, withUser, setStreaming);
-      update((it) => ({
-        ...it,
-        chat: [...it.chat, { role: "assistant", text: r.text, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }],
-      }));
+      const r = await streamChat(settings, withUser, setStreaming, subId);
+      update((it) =>
+        setChat(it, (c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }]),
+      );
     } catch (e) {
-      update((it) => ({ ...it, chat: [...it.chat, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }] }));
+      update((it) => setChat(it, (c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]));
     } finally {
       setStreaming("");
       setBusy(false);
     }
   };
 
+  useEffect(() => {
+    if (props.initial && !sentInitial.current && settings.apiKey) {
+      sentInitial.current = true;
+      send(props.initial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const addSuggestion = (msgIdx: number, sIdx: number | "all") =>
     update((it) => {
-      const m = it.chat[msgIdx];
+      const m = ((subId ? it.subtasks.find((s) => s.id === subId)?.chat : it.chat) ?? [])[msgIdx];
       if (!m?.suggestions) return it;
       const picked = m.suggestions.filter((s, j) => !s.added && (sIdx === "all" || j === sIdx));
-      return {
-        ...it,
-        subtasks: [...it.subtasks, ...picked.map((s) => ({ id: uid(), title: s.title, done: false, byClaude: true, createdAt: Date.now() }))],
-        chat: it.chat.map((x, i) =>
-          i === msgIdx ? { ...x, suggestions: x.suggestions!.map((s, j) => (sIdx === "all" || j === sIdx ? { ...s, added: true } : s)) } : x,
-        ),
-      };
+      const fresh = picked.map((s) => ({ id: uid(), title: s.title, done: false, byClaude: true, createdAt: Date.now() }));
+      // 세부 업무 대화에서 나온 제안은 그 업무 바로 뒤에 넣는다.
+      const at = subId ? it.subtasks.findIndex((s) => s.id === subId) + 1 : it.subtasks.length;
+      const next = { ...it, subtasks: [...it.subtasks.slice(0, at), ...fresh, ...it.subtasks.slice(at)] };
+      return setChat(next, (c) =>
+        c.map((x, i) => (i === msgIdx ? { ...x, suggestions: x.suggestions!.map((s, j) => (sIdx === "all" || j === sIdx ? { ...s, added: true } : s)) } : x)),
+      );
     });
 
   const doneCount = item.subtasks.filter((s) => s.done).length;
+  const chips = sub
+    ? ["이거 어떻게 하면 좋을까?", "언제 하는 게 좋을까?", "더 잘게 나눠 줘"]
+    : ["이 일을 세부 업무로 나눠 줘", "어디서부터 시작하면 좋을까?", "이번 주 안에 끝내려면 어떻게 해야 해?"];
 
   return (
     <section className="chatview">
@@ -730,20 +891,26 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
           <IconBack />
         </button>
         <div className="grow">
-          <strong>{item.title}</strong>
+          <strong>{sub ? sub.title : item.title}</strong>
           <span className="muted small">
-            {item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "세부 업무 없음"}
-            {item.due ? ` · ${dueLabel(item.due)}` : ""}
+            {sub
+              ? `${item.title}${sub.done ? " · 완료" : ""}`
+              : `${item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "세부 업무 없음"}${item.due ? ` · ${dueLabel(item.due)}` : ""}`}
           </span>
         </div>
+        {sub && (
+          <button className={`pill-toggle ${sub.done ? "on" : ""}`} onClick={() => update((it) => ({ ...it, subtasks: it.subtasks.map((s) => (s.id === subId ? { ...s, done: !s.done } : s)) }))}>
+            {sub.done ? <><IconCheck /> 완료</> : "완료하기"}
+          </button>
+        )}
       </header>
 
       <div className="thread">
-        {item.chat.length === 0 && !busy && (
+        {chat.length === 0 && !busy && (
           <div className="empty">
-            <p>이 일에 대해 무엇이든 이야기해 보세요.</p>
+            <p>{sub ? "이 세부 업무를 어떻게 할지 Claude와 정해 보세요." : "이 일에 대해 무엇이든 이야기해 보세요."}</p>
             <div className="chips">
-              {["이 일을 세부 업무로 나눠 줘", "어디서부터 시작하면 좋을까?", "이번 주 안에 끝내려면 어떻게 해야 해?"].map((t) => (
+              {chips.map((t) => (
                 <button key={t} className="chip" onClick={() => send(t)} disabled={!settings.apiKey}>
                   {t}
                 </button>
@@ -751,7 +918,7 @@ function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Ite
             </div>
           </div>
         )}
-        {item.chat.map((m, i) =>
+        {chat.map((m, i) =>
           m.role === "user" ? (
             <div key={i} className="msg user">
               {m.text}
