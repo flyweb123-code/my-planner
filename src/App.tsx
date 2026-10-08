@@ -21,6 +21,26 @@ export default function App() {
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
+  const [, bump] = useState(0);
+  const calExpired = linked && !gToken && gcal.available() && !gcal.hasSession();
+
+  // 연결 유지 서버가 있으면 1시간짜리 권한이 끝날 때마다 조용히 새로 받아 온다.
+  const refreshToken = useCallback(async () => {
+    const t = gcal.savedToken() ?? (await gcal.renew());
+    setGToken((cur) => (cur === t ? cur : t));
+    bump((n) => n + 1);
+    return t;
+  }, []);
+  useEffect(() => {
+    refreshToken();
+    const iv = setInterval(refreshToken, 60_000);
+    const onVis = () => document.visibilityState === "visible" && refreshToken();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [refreshToken]);
 
   // 구글 로그인 스크립트를 미리 불러 두어야 버튼을 눌렀을 때 바로 창이 뜬다.
   useEffect(() => {
@@ -32,11 +52,12 @@ export default function App() {
     gcal
       .upcoming(gToken)
       .then(setEvents)
-      .catch((e) => {
+      .catch(async (e) => {
+        if (!gcal.savedToken() && gcal.hasSession() && (await refreshToken())) return;
         setGToken(gcal.savedToken());
         toast((e as Error).message);
       });
-  }, [gToken]);
+  }, [gToken, refreshToken]);
   useEffect(loadEvents, [loadEvents]);
 
   const connectCalendar = async () => {
@@ -64,7 +85,7 @@ export default function App() {
     syncPrev.current = items;
     if (!gToken) return;
     const timer = setTimeout(async () => {
-      const token = gcal.savedToken();
+      const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) return setGToken(null);
       let changed = false;
       for (const eid of toDelete.current.splice(0)) {
@@ -90,7 +111,7 @@ export default function App() {
           changed = true;
         } catch (e) {
           toast(`캘린더에 반영하지 못했어요: ${(e as Error).message}`);
-          if (!gcal.savedToken()) setGToken(null);
+          if (!gcal.savedToken()) refreshToken();
           break;
         } finally {
           inFlight.current.delete(it.id);
@@ -211,7 +232,7 @@ export default function App() {
             events={events}
             settings={settings}
             calOn={calOn}
-            calExpired={linked && !gToken && gcal.available()}
+            calExpired={calExpired}
             onReconnect={connectCalendar}
             chat={homeChat}
             setChat={setHomeChat}
@@ -1155,6 +1176,23 @@ function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSett
 }
 
 function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount: number; onConnect: () => void; onDisconnect: () => void }) {
+  const [server, setServer] = useState(gcal.serverUrl());
+  const [check, setCheck] = useState<"" | "checking" | "ok" | "fail">("");
+  const saved = gcal.serverUrl();
+  const keep = props.calOn && gcal.hasSession();
+
+  const saveServer = async () => {
+    gcal.setServerUrl(server);
+    if (!server.trim()) return setCheck("");
+    setCheck("checking");
+    try {
+      const r = await fetch(gcal.serverUrl() + "/").then((x) => x.json());
+      setCheck(r.ready ? "ok" : "fail");
+    } catch {
+      setCheck("fail");
+    }
+  };
+
   if (!gcal.available())
     return (
       <div className="panel">
@@ -1168,9 +1206,14 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
         <span className="dot-big" />
         <div className="grow">
           <strong>{props.calOn ? "구글 캘린더에 연결돼 있어요" : props.linked ? "연결 시간이 끝났어요" : "연결 안 됨"}</strong>
-          {props.calOn && <span className="muted small">앞으로 30일 일정 {props.eventsCount}개 · 날짜가 있는 할 일은 자동으로 올라가요</span>}
+          {props.calOn && (
+            <span className="muted small">
+              {keep ? "계속 연결 유지 중" : "1시간 동안 연결"} · 앞으로 30일 일정 {props.eventsCount}개
+            </span>
+          )}
         </div>
       </div>
+      {props.calOn && saved && !keep && <p className="muted small">연결 유지 서버를 쓰려면 연결을 끊고 한 번 다시 연결해 주세요.</p>}
       {props.calOn ? (
         <button className="secondary danger-text" onClick={props.onDisconnect}>
           연결 끊기
@@ -1180,7 +1223,22 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
           <span className="g">G</span> 구글로 연결
         </button>
       )}
-      <p className="muted small">서버 없이 이 기기에서만 연결하기 때문에 연결은 1시간마다 끝나요. 그때 비서 화면 위에 뜨는 "다시 연결"을 한 번 누르면 돼요.</p>
+
+      <h3>연결 유지 서버</h3>
+      <p className="muted small">
+        {saved
+          ? "서버가 1시간마다 연결을 새로 받아 와서 계속 연결된 채로 있어요."
+          : "비워 두면 연결이 1시간마다 끝나요. 서버 주소를 넣으면 계속 연결돼요."}
+      </p>
+      <input placeholder="https://….workers.dev" value={server} onChange={(e) => (setServer(e.target.value), setCheck(""))} inputMode="url" autoCapitalize="off" autoCorrect="off" />
+      <div className="row">
+        <button className="secondary" onClick={saveServer} disabled={server.trim() === saved && check !== ""}>
+          저장하고 확인
+        </button>
+        {check === "checking" && <span className="check checking">확인 중…</span>}
+        {check === "ok" && <span className="check ok">서버 준비됐어요</span>}
+        {check === "fail" && <span className="check fail">서버에 접속이 안 되거나 비밀 값이 빠졌어요</span>}
+      </div>
     </div>
   );
 }

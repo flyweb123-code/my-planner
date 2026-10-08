@@ -1,15 +1,24 @@
 // 구글 캘린더 연동: "구글로 로그인"으로 받은 접근 권한으로 캘린더 API를 부른다.
-// 서버가 없는 앱이라 권한은 1시간마다 만료되고, 그때 버튼 한 번으로 다시 받는다.
+// 권한은 1시간짜리다. 연결 유지 서버(server/worker.js)를 설정하면 그 서버가 대신
+// 새 권한을 받아 와서 계속 연결된 채로 있고, 없으면 만료될 때 버튼 한 번으로 다시 받는다.
 import { GOOGLE_CLIENT_ID } from "./config";
 
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type TokenClient = { requestAccessToken: (o?: { prompt?: string }) => void };
+type CodeClient = { requestCode: () => void };
 declare global {
   interface Window {
     google?: {
       accounts: {
         oauth2: {
           initTokenClient: (cfg: { client_id: string; scope: string; callback: (r: TokenResponse) => void; error_callback?: (e: { type: string }) => void }) => TokenClient;
+          initCodeClient: (cfg: {
+            client_id: string;
+            scope: string;
+            ux_mode: "popup";
+            callback: (r: { code?: string; error?: string }) => void;
+            error_callback?: (e: { type: string }) => void;
+          }) => CodeClient;
           revoke: (token: string, done: () => void) => void;
         };
       };
@@ -20,6 +29,93 @@ declare global {
 const SCOPE = "https://www.googleapis.com/auth/calendar.events";
 const TOKEN_KEY = "gcal_token";
 const LINKED_KEY = "gcal_linked";
+const SESSION_KEY = "gcal_session"; // 연결 유지 서버가 준 암호화된 새로 고침 열쇠
+const SERVER_KEY = "gcal_server"; // 연결 유지 서버 주소
+
+export function serverUrl(): string {
+  try {
+    return (localStorage.getItem(SERVER_KEY) ?? "").trim().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+export function setServerUrl(url: string) {
+  store(SERVER_KEY, url.trim() ? url.trim().replace(/\/+$/, "") : null);
+}
+export function hasSession(): boolean {
+  try {
+    return !!localStorage.getItem(SESSION_KEY) && !!serverUrl();
+  } catch {
+    return false;
+  }
+}
+const saveToken = (token: string, expiresIn?: number) =>
+  store(TOKEN_KEY, JSON.stringify({ token, exp: Date.now() + ((expiresIn ?? 3600) - 120) * 1000 }));
+
+async function post(path: string, body: unknown) {
+  const res = await fetch(serverUrl() + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// 서버에 맡겨 둔 열쇠로 새 1시간짜리 권한을 받는다. 동시에 여러 번 불려도 한 번만 요청한다.
+let renewing: Promise<string | null> | null = null;
+export function renew(): Promise<string | null> {
+  const t = savedToken();
+  if (t) return Promise.resolve(t);
+  if (!hasSession()) return Promise.resolve(null);
+  renewing ??= (async () => {
+    try {
+      const r = await post("/refresh", { session: localStorage.getItem(SESSION_KEY) });
+      if (r.ok && r.data.access_token) {
+        saveToken(r.data.access_token, r.data.expires_in);
+        return r.data.access_token as string;
+      }
+      // 구글에서 연결을 끊었거나 열쇠가 더는 안 맞을 때: 다시 연결해야 한다
+      if (r.status === 401) store(SESSION_KEY, null);
+      return null;
+    } catch {
+      return null; // 인터넷이 잠깐 끊긴 경우 등: 다음에 다시 시도
+    } finally {
+      renewing = null;
+    }
+  })();
+  return renewing;
+}
+
+// 서버를 쓸 때의 연결: 구글이 준 일회용 코드를 서버에 보내 열쇠와 권한을 받는다
+async function signInWithServer(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cc = window.google!.accounts.oauth2.initCodeClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: SCOPE,
+      ux_mode: "popup",
+      callback: async (r) => {
+        if (!r.code) return reject(new Error("구글 연결이 취소됐어요."));
+        try {
+          const x = await post("/exchange", { code: r.code });
+          if (!x.ok || !x.data.session) {
+            const why =
+              x.data.error === "no_refresh_token"
+                ? "구글이 연결 유지 열쇠를 주지 않았어요. 구글 계정 > 보안 > 타사 연결에서 이 앱을 지운 뒤 다시 연결해 주세요."
+                : x.data.error === "server_not_configured"
+                  ? "연결 유지 서버에 비밀 값이 아직 안 들어가 있어요."
+                  : `연결 유지 서버에서 오류가 났어요 (${x.data.error ?? x.status}).`;
+            return reject(new Error(why));
+          }
+          store(SESSION_KEY, x.data.session);
+          saveToken(x.data.access_token, x.data.expires_in);
+          store(LINKED_KEY, "1");
+          resolve(x.data.access_token);
+        } catch {
+          reject(new Error("연결 유지 서버에 접속하지 못했어요. 설정의 서버 주소를 확인해 주세요."));
+        }
+      },
+      error_callback: (e) => reject(new Error(e.type === "popup_closed" ? "구글 로그인 창이 닫혔어요." : "구글 로그인 창을 열지 못했어요. 팝업 차단을 확인해 주세요.")),
+    });
+    cc.requestCode();
+  });
+}
 
 export const available = () => !!GOOGLE_CLIENT_ID;
 
@@ -71,13 +167,14 @@ export function preload(): Promise<void> {
 export async function signIn(): Promise<string> {
   if (!GOOGLE_CLIENT_ID) throw new Error("아직 구글 로그인 준비가 안 됐어요.");
   await preload();
+  if (serverUrl()) return signInWithServer();
   return new Promise((resolve, reject) => {
     const tc = window.google!.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: SCOPE,
       callback: (r) => {
         if (!r.access_token) return reject(new Error("구글 연결이 취소됐어요."));
-        store(TOKEN_KEY, JSON.stringify({ token: r.access_token, exp: Date.now() + ((r.expires_in ?? 3600) - 60) * 1000 }));
+        saveToken(r.access_token, r.expires_in);
         store(LINKED_KEY, "1");
         resolve(r.access_token);
       },
@@ -92,6 +189,7 @@ export function signOut() {
   if (t && window.google) window.google.accounts.oauth2.revoke(t, () => {});
   store(TOKEN_KEY, null);
   store(LINKED_KEY, null);
+  store(SESSION_KEY, null);
 }
 
 async function api(token: string, path: string, init?: RequestInit) {
