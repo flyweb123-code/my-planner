@@ -173,7 +173,6 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .now-line { display: grid; gap: 4px; text-align: left; white-space: normal; background: var(--accent-soft); color: var(--text); border-radius: var(--r-lg); padding: 16px 18px; font-size: 17px; font-weight: 500; line-height: 1.55; }
 .bgroup { display: grid; gap: 6px; margin-top: 4px; }
 .bline { text-align: left; white-space: normal; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--r); padding: 11px 14px; font-size: 15px; font-weight: 500; line-height: 1.45; }
-.bgroup .label.warn + .bline, .bgroup .label.warn ~ .bline { border-left: 3px solid var(--warn); }
 
 /* ---------- 설정 ---------- */
 .menu { list-style: none; padding: 0; margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
@@ -270,7 +269,7 @@ input.switch:checked::after { transform: translateX(18px); }
 .popover button { background: none; color: var(--text); text-align: left; padding: 11px 12px; border-radius: 10px; font-weight: 500; }
 .popover button:hover { background: var(--surface-2); }
 .popover button.danger { color: var(--danger); }
-.meta-line { display: inline-flex; align-items: center; gap: 6px; background: none; color: var(--muted); font-size: 14px; font-weight: 500; padding: 2px 0; margin: 0 0 4px; }
+.meta-line { display: inline-flex; flex-wrap: wrap; text-align: left; white-space: normal; line-height: 1.5; max-width: 100%; align-items: center; gap: 6px; background: none; color: var(--muted); font-size: 14px; font-weight: 500; padding: 2px 0; margin: 0 0 4px; }
 .meta-line .chev svg { width: 14px; height: 14px; transform: rotate(90deg); transition: transform .2s; }
 .meta-line .chev.up svg { transform: rotate(-90deg); }
 .pill-done { background: var(--todo-soft); color: var(--todo); font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
@@ -345,3 +344,18 @@ input.switch:checked::after { transform: translateX(18px); }
 .pick.day { flex: 1; }
 .sched-row { align-items: baseline; }
 .sched-clear { padding-left: 62px; }
+
+/* ---------- 정렬 맞추기: 설정 화면 버튼 ---------- */
+.panel > button { width: 100%; min-height: 46px; }
+.panel .row > button, .panel .row > .filebtn { flex: 1 1 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.row label.filebtn { color: var(--text); font-size: 15px; font-weight: 600; gap: 0; }
+.panel .row .check { flex-basis: 100%; }
+.panel .add { align-items: stretch; }
+.panel .add button { min-height: 46px; padding: 0 22px; border-radius: var(--r-sm); }
+.panel h3 { margin-top: 28px; }
+.meta-line { display: block; }
+.meta-line .chev { display: inline-block; vertical-align: -2px; margin-left: 4px; }
+.meta-line .pill-done { margin-right: 6px; }
+.panel .add input { flex: 1 1 auto; min-width: 0; width: auto; }
+.panel .add { flex-wrap: nowrap; }
+.panel .row > button, .panel .row > .filebtn { line-height: 1.2; margin: 0; padding-top: 0; padding-bottom: 0; }

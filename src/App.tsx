@@ -749,7 +749,7 @@ function ItemView(props: {
   const metaBits = [
     item.due ? `${fmtDay(item.due)}${item.time ? " " + fmtTime(item.time) : ""}` : "일정 없음",
     item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "",
-    item.due && props.gToken ? (item.calendarEventId ? "캘린더에 있음" : "캘린더에 올리는 중") : "",
+    item.due && props.gToken && item.calendarEventId ? "캘린더에 있음" : "",
   ].filter(Boolean);
 
   const startAsk = () => {
