@@ -215,6 +215,9 @@ export type CalEvent = {
   date: string; // 시작 날짜 YYYY-MM-DD (이 기기 시간 기준)
   time: string; // "15:00" 또는 종일이면 ""
   endTime: string;
+  endDate: string; // 끝나는 날 (종일 일정도 마지막 날 기준)
+  location: string;
+  description: string;
   itemId?: string; // 이 앱의 할 일에서 만든 일정이면 그 할 일 id
 };
 
@@ -233,7 +236,7 @@ export async function range(token: string, from: Date, to: Date): Promise<CalEve
     maxResults: "250",
   });
   const data = await api(token, `/calendars/primary/events?${q}`);
-  type Raw = { id: string; summary?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string }; extendedProperties?: { private?: { plannerItemId?: string } } };
+  type Raw = { id: string; summary?: string; location?: string; description?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string }; extendedProperties?: { private?: { plannerItemId?: string } } };
   const hm = (iso: string) => new Date(iso).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
   return (data.items ?? []).map((e: Raw) => ({
     id: e.id,
@@ -241,8 +244,31 @@ export async function range(token: string, from: Date, to: Date): Promise<CalEve
     date: e.start.dateTime ? localDate(new Date(e.start.dateTime)) : e.start.date!,
     time: e.start.dateTime ? hm(e.start.dateTime) : "",
     endTime: e.end.dateTime ? hm(e.end.dateTime) : "",
+    endDate: e.end.dateTime ? localDate(new Date(e.end.dateTime)) : prevDay(e.end.date!),
+    location: e.location ?? "",
+    description: e.description ?? "",
     itemId: e.extendedProperties?.private?.plannerItemId,
   }));
+}
+
+// 종일 일정의 end.date는 "다음 날"이라 하루를 빼서 마지막 날로 바꾼다.
+function prevDay(d: string) {
+  const x = new Date(d + "T00:00:00");
+  x.setDate(x.getDate() - 1);
+  return localDate(x);
+}
+
+export type EventEdit = { title: string; due: string; time?: string; endDate?: string; endTime?: string; location: string; description: string };
+
+// 캘린더 탭에서 구글 일정을 직접 고친다 (구글 캘린더 편집 화면과 같은 항목).
+export async function updateEvent(token: string, eventId: string, e: EventEdit) {
+  const b = body({ id: "", ...e });
+  const start = "date" in b.start ? { date: b.start.date, dateTime: null } : { ...b.start, date: null };
+  const end = "date" in b.end ? { date: b.end.date, dateTime: null } : { ...b.end, date: null };
+  await api(token, `/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ summary: e.title || "(제목 없음)", location: e.location, description: e.description, start, end }),
+  });
 }
 
 type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string };

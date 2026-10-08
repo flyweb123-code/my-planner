@@ -359,3 +359,25 @@ input.switch:checked::after { transform: translateX(18px); }
 .panel .add input { flex: 1 1 auto; min-width: 0; width: auto; }
 .panel .add { flex-wrap: nowrap; }
 .panel .row > button, .panel .row > .filebtn { line-height: 1.2; margin: 0; padding-top: 0; padding-bottom: 0; }
+
+/* ---------- 캘린더 일정 편집 ---------- */
+.ev { cursor: pointer; }
+.ev-time { display: grid; line-height: 1.3; }
+.ev-time small { font-size: 11px; color: var(--faint); }
+button.wide { width: 100%; min-height: 46px; margin-top: 16px; }
+.event-edit .field.memo input { border: 0; background: none; padding: 12px 10px; }
+
+/* 홈 '확인할 것': 밀어서 잠시 숨기기 */
+.blist { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.blist .swipe { border: 1px solid var(--line); border-radius: var(--r); }
+.blist .swipe-body { padding: 11px 14px; font-size: 15px; font-weight: 500; line-height: 1.45; }
+.swipe-actions .later { background: var(--muted); }
+.label-hint { font-weight: 500; color: var(--faint); margin-left: 6px; letter-spacing: 0; text-transform: none; }
+
+/* 아래로 당겨서 새로고침 */
+html, body { overscroll-behavior-y: none; }
+.ptr { position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 50%; z-index: 50; pointer-events: none; }
+.ptr-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--muted); border: 1px solid var(--line); box-shadow: var(--shadow); transition: color .15s, background .15s; }
+.ptr-btn svg { width: 20px; height: 20px; }
+.ptr-btn.ready { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.ptr-btn.spin { animation: spin .7s linear infinite; color: var(--accent-ink); background: var(--accent); }

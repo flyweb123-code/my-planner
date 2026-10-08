@@ -7,7 +7,7 @@ import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconLeft, IconList, IconMore, IconPlus, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconLeft, IconList, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
@@ -272,6 +272,7 @@ export default function App() {
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
         )}
       </main>
+      <PullToRefresh />
       {view.name !== "chat" && (
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
@@ -375,6 +376,30 @@ function HomeChat(props: {
   }, [settings.apiKey, events.length]);
 
   const ask = (text: string) => send(`${text} 이거 어떻게 하면 좋을까?`);
+
+  // '확인할 것'을 밀어서 숨기면 6시간 동안만 안 보인다. 영영 사라지지 않고 그 뒤 브리핑에 다시 나올 수 있다.
+  const [snooze, setSnooze] = useState<Record<string, number>>(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("briefSnooze") ?? "{}") as Record<string, number>;
+      return Object.fromEntries(Object.entries(all).filter(([, until]) => until > Date.now()));
+    } catch {
+      return {};
+    }
+  });
+  const snoozeKey = (m: { text: string; item_id: string }) => m.item_id || m.text;
+  const hide = (m: { text: string; item_id: string }) => {
+    const next = { ...snooze, [snoozeKey(m)]: Date.now() + 6 * 3600000 };
+    setSnooze(next);
+    try {
+      localStorage.setItem("briefSnooze", JSON.stringify(next));
+    } catch {
+      /* 무시 */
+    }
+    toast("6시간 동안 숨겼어요");
+  };
+  const [swipedBrief, setSwipedBrief] = useState<string | null>(null);
+  const checks = brief ? brief.check.filter((m) => !(snooze[snoozeKey(m)] > Date.now())) : [];
+
   const briefing = (
     <div className="msg assistant brief">
       <h2>{greeting()}</h2>
@@ -396,14 +421,24 @@ function HomeChat(props: {
               ))}
             </div>
           )}
-          {brief.check.length > 0 && (
+          {checks.length > 0 && (
             <div className="bgroup">
-              <p className="label">확인할 것</p>
-              {brief.check.map((m, i) => (
-                <button key={i} className="bline" onClick={() => settings.apiKey && ask(m.text)}>
-                  {m.text}
-                </button>
-              ))}
+              <p className="label">
+                확인할 것 <span className="label-hint">왼쪽으로 밀면 잠시 숨겨요</span>
+              </p>
+              <ul className="blist">
+                {checks.map((m) => (
+                  <SwipeRow
+                    key={snoozeKey(m)}
+                    open={swipedBrief === snoozeKey(m)}
+                    onOpenChange={(o) => setSwipedBrief(o ? snoozeKey(m) : null)}
+                    onTap={() => settings.apiKey && ask(m.text)}
+                    actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
+                  >
+                    <span className="grow">{m.text}</span>
+                  </SwipeRow>
+                ))}
+              </ul>
             </div>
           )}
         </>
@@ -606,6 +641,69 @@ function ItemRow(props: {
   );
 }
 
+/* ---------------- 아래로 당겨서 새로고침 ---------------- */
+
+// 화면 맨 위에서 아래로 끌어내리면 숨어 있던 새로고침 버튼이 따라 내려오고,
+// 충분히 당긴 뒤 놓으면 앱을 새로 불러온다 (새 버전과 최신 일정을 받는다).
+function PullToRefresh() {
+  const [pull, setPull] = useState(0);
+  const [spinning, setSpinning] = useState(false);
+  const pullRef = useRef(0);
+  const TRIGGER = 72;
+  useEffect(() => {
+    let startY: number | null = null;
+    let startX = 0;
+    let vertical: boolean | null = null;
+    const set = (v: number) => {
+      pullRef.current = v;
+      setPull(v);
+    };
+    const onStart = (e: TouchEvent) => {
+      const t = e.target as HTMLElement;
+      if (window.scrollY > 0 || t.closest("textarea, input, select, .popover")) return (startY = null);
+      startY = e.touches[0].clientY;
+      startX = e.touches[0].clientX;
+      vertical = null;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (startY === null) return;
+      const dy = e.touches[0].clientY - startY;
+      const dx = e.touches[0].clientX - startX;
+      if (vertical === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) vertical = Math.abs(dy) > Math.abs(dx);
+      if (!vertical || dy <= 0 || window.scrollY > 0) return set(0);
+      set(Math.min(120, dy * 0.5)); // 손가락보다 천천히 따라오게
+    };
+    const onEnd = () => {
+      if (startY === null) return;
+      startY = null;
+      if (pullRef.current >= TRIGGER) {
+        setSpinning(true);
+        set(TRIGGER);
+        setTimeout(() => location.reload(), 350);
+      } else set(0);
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onEnd);
+    window.addEventListener("touchcancel", onEnd);
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+  if (!pull && !spinning) return null;
+  const ready = pull >= TRIGGER;
+  return (
+    <div className="ptr" style={{ transform: `translate(-50%, ${pull - 52}px)`, opacity: Math.min(1, pull / 40) }} aria-hidden="true">
+      <span className={`ptr-btn ${ready ? "ready" : ""} ${spinning ? "spin" : ""}`} style={spinning ? undefined : { transform: `rotate(${pull * 4}deg)` }}>
+        <IconRefresh />
+      </span>
+    </div>
+  );
+}
+
 /* ---------------- 날짜 입력 ---------------- */
 
 // 아이폰의 날짜 선택기에서 "재설정"을 누르면 기본값으로 돌아가는데,
@@ -655,7 +753,9 @@ function PickText(props: { type: "date" | "time"; value: string; text: string; o
   );
 }
 
-function ScheduleEditor({ item, update }: { item: Item; update: (fn: (it: Item) => Item) => void }) {
+type Sched = Pick<Item, "due" | "time" | "endDate" | "endTime">;
+
+function ScheduleEditor<T extends Sched>({ item, update, noClear }: { item: T; update: (fn: (it: T) => T) => void; noClear?: boolean }) {
   if (!item.due)
     return (
       <button className="field sched-add" onClick={() => update((it) => ({ ...it, due: today() }))}>
@@ -666,7 +766,7 @@ function ScheduleEditor({ item, update }: { item: Item; update: (fn: (it: Item) 
     );
   const allDay = !item.time;
   const end = itemEnd(item);
-  const set = (patch: Partial<Item>) => update((it) => ({ ...it, ...patch }));
+  const set = (patch: Partial<Sched>) => update((it) => ({ ...it, ...patch }));
 
   // 구글 캘린더처럼 시작을 옮기면 길이를 유지한 채 끝도 같이 옮긴다.
   const moveStart = (date: string, time?: string) => {
@@ -713,9 +813,11 @@ function ScheduleEditor({ item, update }: { item: Item; update: (fn: (it: Item) 
         <PickText type="date" value={end.date} text={fmtDay(end.date)} onChange={(d) => setEnd(d)} className="day" />
         {!allDay && <PickText type="time" value={end.time!} text={fmtTime(end.time!)} onChange={(t) => setEnd(end.date, t)} className="time" />}
       </div>
-      <button className="sched-clear" onClick={() => set({ due: "", time: undefined, endDate: undefined, endTime: undefined })}>
-        일정 지우기
-      </button>
+      {!noClear && (
+        <button className="sched-clear" onClick={() => set({ due: "", time: undefined, endDate: undefined, endTime: undefined })}>
+          일정 지우기
+        </button>
+      )}
     </div>
   );
 }
@@ -1376,7 +1478,69 @@ function DataSettings() {
 
 /* ---------------- 캘린더 ---------------- */
 
-type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string };
+type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent };
+
+/* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
+function EventEditor({ ev, onClose, onSaved }: { ev: CalEvent; onClose: () => void; onSaved: () => void }) {
+  const [d, setD] = useState<gcal.EventEdit>({
+    title: ev.title,
+    due: ev.date,
+    time: ev.time || undefined,
+    endDate: ev.endDate,
+    endTime: ev.endTime || undefined,
+    location: ev.location,
+    description: ev.description,
+  });
+  const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
+    setBusy(true);
+    try {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+      await fn(token);
+      toast(done);
+      onSaved();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="detail event-edit">
+      <header className="page-head">
+        <button className="back" onClick={onClose}>
+          <IconBack />
+          캘린더
+        </button>
+        <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
+          저장
+        </button>
+      </header>
+      <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
+      <div className="fields">
+        <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
+        <div className="field memo">
+          <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
+        </div>
+        <div className="field memo">
+          <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
+        </div>
+      </div>
+      <button
+        className="secondary danger-text wide"
+        disabled={busy}
+        onClick={() => (confirmDel ? run((t) => gcal.deleteEvent(t, ev.id), "일정을 삭제했어요") : setConfirmDel(true))}
+        onBlur={() => setConfirmDel(false)}
+      >
+        {confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+      </button>
+      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요.</p>
+    </section>
+  );
+}
 
 const ymd = (d: Date) => d.toLocaleDateString("sv-SE");
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
@@ -1405,6 +1569,7 @@ function CalendarView(props: {
   const [selected, setSelected] = useState(today);
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<CalEvent | null>(null);
 
   useEffect(() => {
     try {
@@ -1441,7 +1606,7 @@ function CalendarView(props: {
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
-  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId });
+  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e });
   const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
@@ -1459,13 +1624,28 @@ function CalendarView(props: {
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}`} onClick={() => e.itemId && props.onOpen(e.itemId)}>
+    <li className={`ev ${e.kind}`} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
       <span className="ev-bar" />
-      <span className="ev-time">{e.time ? e.time : "종일"}</span>
+      <span className="ev-time">
+        {e.time ? e.time : "종일"}
+        {e.time && e.endTime && <small>{e.endTime}</small>}
+      </span>
       <span className="ev-title">{e.title}</span>
       {e.kind === "todo" && <span className="tag">할 일</span>}
     </li>
   );
+
+  if (editing)
+    return (
+      <EventEditor
+        ev={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          load();
+        }}
+      />
+    );
 
   return (
     <section className="calendar">
