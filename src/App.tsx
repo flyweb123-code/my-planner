@@ -410,7 +410,7 @@ function HomeChat(props: {
       )}
       {!settings.apiKey && (
         <p className="hint">
-          <a onClick={props.onGoSettings}>설정에서 API 키를 넣으면</a> Claude가 직접 살펴보고 대화도 할 수 있어요.
+          <a onClick={props.onGoSettings}>설정에서 API 키를 넣으면</a> 클론이 직접 살펴보고 대화도 할 수 있어요.
         </p>
       )}
     </div>
@@ -800,7 +800,7 @@ function ItemView(props: {
             </div>
           )}
           <div className="field memo">
-            <textarea placeholder="메모 (Claude도 같이 봐요)" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
+            <textarea placeholder="메모 (클론도 같이 봐요)" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
           </div>
         </div>
       )}
@@ -808,7 +808,7 @@ function ItemView(props: {
       <div className="ask">
         <textarea
           rows={1}
-          placeholder="이 일에 대해 Claude에게 물어보기"
+          placeholder="이 일에 대해 클론에게 물어보기"
           value={ask}
           onChange={(e) => setAsk(e.target.value)}
           onKeyDown={(e) => {
@@ -854,7 +854,7 @@ function ItemView(props: {
               <span className={`tick ${s.done ? "on" : ""}`}>{s.done && <IconCheck />}</span>
               <span className="grow">
                 <span className={`t ${s.done ? "done" : ""}`}>{s.title}</span>
-                <span className="preview">{lm ? plain(lm.text) : s.done ? "완료" : "눌러서 Claude와 정하기"}</span>
+                <span className="preview">{lm ? plain(lm.text) : s.done ? "완료" : "눌러서 클론과 정하기"}</span>
               </span>
               {s.chat && s.chat.length > 0 && <span className="count">{s.chat.length}</span>}
             </SwipeRow>
@@ -875,7 +875,7 @@ function ItemView(props: {
           />
         </li>
       </ul>
-      {item.subtasks.length === 0 && <p className="muted small hint">Claude에게 물어보면 필요한 세부 업무를 나눠 줘요.</p>}
+      {item.subtasks.length === 0 && <p className="muted small hint">클론에게 물어보면 필요한 세부 업무를 나눠 줘요.</p>}
     </section>
   );
 }
@@ -948,7 +948,7 @@ function SwipeRow(props: {
   );
 }
 
-/* ---------------- Claude와 대화 ---------------- */
+/* ---------------- 클론과 대화 ---------------- */
 
 function ChatView(props: {
   item: Item;
@@ -1053,7 +1053,7 @@ function ChatView(props: {
       <div className="thread">
         {chat.length === 0 && !busy && (
           <div className="empty">
-            <p>{sub ? "이 세부 업무를 어떻게 할지 Claude와 정해 보세요." : "이 일에 대해 무엇이든 이야기해 보세요."}</p>
+            <p>{sub ? "이 세부 업무를 어떻게 할지 클론과 정해 보세요." : "이 일에 대해 무엇이든 이야기해 보세요."}</p>
             <div className="chips">
               {chips.map((t) => (
                 <button key={t} className="chip" onClick={() => send(t)} disabled={!settings.apiKey}>
@@ -1103,7 +1103,7 @@ function ChatView(props: {
         <textarea
           ref={boxRef}
           rows={1}
-          placeholder={settings.apiKey ? "Claude에게 메시지 보내기" : "설정에서 API 키를 넣어 주세요"}
+          placeholder={settings.apiKey ? "클론에게 메시지 보내기" : "설정에서 API 키를 넣어 주세요"}
           value={msg}
           disabled={!settings.apiKey}
           onChange={(e) => setMsg(e.target.value)}
@@ -1149,7 +1149,7 @@ function SettingsView(props: {
         <ul className="menu">
           <li onClick={() => setPage("claude")}>
             <span className="grow">
-              <strong>Claude 연결</strong>
+              <strong>클론 연결</strong>
               <span className={`status ${settings.apiKey ? "on" : ""}`}>{settings.apiKey ? `API 키 저장됨 ${keyTail}` : "API 키 없음"}</span>
             </span>
             <span className="chev"><IconRight /></span>
@@ -1172,7 +1172,7 @@ function SettingsView(props: {
       </section>
     );
 
-  const titles = { claude: "Claude 연결", calendar: "구글 캘린더", data: "데이터 백업" };
+  const titles = { claude: "클론 연결", calendar: "구글 캘린더", data: "데이터 백업" };
   return (
     <section className="settings">
       <header className="sub-head">
@@ -1197,7 +1197,7 @@ function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSett
     setCheck({ state: "checking", text: "확인하는 중…" });
     try {
       const name = await checkKey(s);
-      setCheck({ state: "ok", text: `Claude와 연결됐어요 (${name})` });
+      setCheck({ state: "ok", text: `클론과 연결됐어요 (${name})` });
     } catch (e) {
       const msg = (e as { status?: number }).status === 401 ? "키가 올바르지 않아요. 다시 복사해 넣어 주세요." : (e as Error).message;
       setCheck({ state: "fail", text: msg });

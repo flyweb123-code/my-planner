@@ -19,7 +19,7 @@ function talkNotes(it: Item, perChat: number, maxLen: number, skip?: string) {
   const clip = (t: string) => (t.length > maxLen ? t.slice(0, maxLen) + "…" : t).replace(/\s+/g, " ");
   const fmt = (label: string, chat: Msg[] | undefined) =>
     chat && chat.length
-      ? `- ${label}:\n` + chat.slice(-perChat).map((m) => `    ${m.role === "user" ? "사용자" : "Claude"}: ${clip(m.text)}`).join("\n")
+      ? `- ${label}:\n` + chat.slice(-perChat).map((m) => `    ${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text)}`).join("\n")
       : "";
   const parts = [
     skip === "item" ? "" : fmt("할 일 전체 대화", it.chat),
@@ -80,7 +80,7 @@ function worldText(w: World, exceptId: string) {
   const others = w.items.filter((i) => !i.done && i.id !== exceptId);
   const itemsText = others.map((i) => describeItem(i, { perChat: 2, maxLen: 200 })).join("\n\n") || "(없음)";
   const clip = (t: string) => (t.length > 200 ? t.slice(0, 200) + "…" : t).replace(/\s+/g, " ");
-  const home = w.home.slice(-6).map((m) => `- ${m.role === "user" ? "사용자" : "Claude"}: ${clip(m.text)}`).join("\n") || "(없음)";
+  const home = w.home.slice(-6).map((m) => `- ${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text)}`).join("\n") || "(없음)";
   return `\n\n## 사용자의 다른 할 일\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${eventsText(w.events)}\n\n## 홈 비서와 최근 대화\n${home}`;
 }
 
@@ -105,7 +105,7 @@ export async function streamChat(
     output_config: { effort: "low" },
     system:
       "너는 사용자의 개인 비서이자 대화 상대다. 사용자는 앞으로 할 일 하나에 대해 너와 편하게 이야기한다. " +
-      "Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
+      "너의 이름은 '클론'이다. 메신저에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
       "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. 도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
       `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item, { perChat: 8, maxLen: 600, skip: subId ?? "item" })}${focus}` +
       "\n\n위의 다른 대화 내용은 사용자와 이미 나눈 이야기다. 이어지는 맥락으로 자연스럽게 활용하고, 거기서 정한 내용과 어긋나지 않게 답한다. " +
@@ -238,7 +238,7 @@ export async function homeChat(
   const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}`).join("\n\n") || "(없음)";
   const evText = eventsText(events);
   const system =
-    "너는 사용자의 개인 비서다. Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 짧게 답한다. 마크다운을 써도 된다.\n" +
+    "너는 사용자의 개인 비서 '클론'이다. 메신저에서 대화하듯 자연스럽고 친근한 한국어로 짧게 답한다. 마크다운을 써도 된다.\n" +
     "사용자가 일정이나 해야 할 일을 말하면 묻지 말고 바로 도구로 정리한다:\n" +
     "- 기존 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
     "- 관련된 할 일이 없으면 add_item으로 새로 만든다. '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다.\n" +

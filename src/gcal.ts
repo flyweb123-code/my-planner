@@ -249,7 +249,7 @@ type ItemLike = { id: string; title: string; due: string; time?: string; endDate
 
 // 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 시작~종료, 없으면 종일 일정.
 function body(it: ItemLike) {
-  const base = { summary: it.title, description: "내 비서 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
+  const base = { summary: it.title, description: "클론 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
   const e = itemEnd(it);
   if (it.time) {
     const start = new Date(`${it.due}T${it.time}:00`);

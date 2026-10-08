@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#d9632b"/><rect x="128" y="150" width="256" height="40" rx="20" fill="#fff"/><rect x="128" y="236" width="196" height="40" rx="20" fill="#fff" opacity=".85"/><rect x="128" y="322" width="140" height="40" rx="20" fill="#fff" opacity=".7"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#2f5bea"/>
+  <g transform="translate(0 16)">
+    <path d="M120 152a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v152a40 40 0 0 1-40 40H236l-66 56v-56h-10a40 40 0 0 1-40-40z" fill="#fff"/>
+    <path d="M120 152a40 40 0 0 1 40-40h192a40 40 0 0 1 40 40v14H120z" fill="#d6e1ff"/>
+    <g fill="#2f5bea">
+      <circle cx="196" cy="226" r="15"/><circle cx="256" cy="226" r="15"/><circle cx="316" cy="226" r="15" fill="#18c2f0"/>
+      <circle cx="196" cy="282" r="15" fill-opacity=".35"/><circle cx="256" cy="282" r="15" fill-opacity=".35"/><circle cx="316" cy="282" r="15" fill-opacity=".35"/>
+    </g>
+  </g>
+</svg>
