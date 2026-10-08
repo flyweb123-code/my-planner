@@ -21,6 +21,22 @@ export default function App() {
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
+
+  // 아이폰에서 키보드가 올라오면 화면 아래에 붙은 탭 바도 키보드 위로 같이 올라온다.
+  // 글자를 입력하는 동안에는 탭 바를 숨기고, 입력창이 키보드 바로 위에 붙게 한다.
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    const isField = (el: EventTarget | null) =>
+      el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !["checkbox", "radio", "button", "file", "date", "time"].includes(el.type));
+    const onIn = (e: FocusEvent) => isField(e.target) && setTyping(true);
+    const onOut = () => setTimeout(() => setTyping(isField(document.activeElement)), 0);
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("focusout", onOut);
+    return () => {
+      document.removeEventListener("focusin", onIn);
+      document.removeEventListener("focusout", onOut);
+    };
+  }, []);
   const [, bump] = useState(0);
   const calExpired = linked && !gToken && gcal.available() && !gcal.hasSession();
 
@@ -231,7 +247,7 @@ export default function App() {
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
   return (
-    <div className={`app ${view.name === "chat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""}`}>
+    <div className={`app ${view.name === "chat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
       <main>
         {view.name === "home" && (
           <HomeChat

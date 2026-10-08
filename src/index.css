@@ -381,3 +381,8 @@ html, body { overscroll-behavior-y: none; }
 .ptr-btn svg { width: 20px; height: 20px; }
 .ptr-btn.ready { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .ptr-btn.spin { animation: spin .7s linear infinite; color: var(--accent-ink); background: var(--accent); }
+
+/* 입력 중(키보드가 올라온 상태)에는 탭 바를 숨기고 입력창을 맨 아래로 */
+.app.kb-open .tabs { display: none; }
+.app.kb-open .composer { bottom: calc(8px + env(safe-area-inset-bottom)); }
+.app.kb-open { padding-bottom: 16px; }
