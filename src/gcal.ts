@@ -2,6 +2,7 @@
 // 권한은 1시간짜리다. 연결 유지 서버(server/worker.js)를 설정하면 그 서버가 대신
 // 새 권한을 받아 와서 계속 연결된 채로 있고, 없으면 만료될 때 버튼 한 번으로 다시 받는다.
 import { GOOGLE_CLIENT_ID } from "./config";
+import { itemEnd } from "./store";
 
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type TokenClient = { requestAccessToken: (o?: { prompt?: string }) => void };
@@ -244,25 +245,28 @@ export async function range(token: string, from: Date, to: Date): Promise<CalEve
   }));
 }
 
-// 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 1시간짜리, 없으면 종일 일정.
-function body(it: { id: string; title: string; due: string; time?: string }) {
+type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string };
+
+// 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 시작~종료, 없으면 종일 일정.
+function body(it: ItemLike) {
   const base = { summary: it.title, description: "내 비서 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
+  const e = itemEnd(it);
   if (it.time) {
     const start = new Date(`${it.due}T${it.time}:00`);
-    const end = new Date(start.getTime() + 3600000);
+    const end = new Date(`${e.date}T${e.time}:00`);
     return { ...base, start: { dateTime: start.toISOString(), timeZone: tz() }, end: { dateTime: end.toISOString(), timeZone: tz() } };
   }
-  const next = new Date(it.due + "T00:00:00");
+  const next = new Date(e.date + "T00:00:00");
   next.setDate(next.getDate() + 1);
   return { ...base, start: { date: it.due }, end: { date: localDate(next) } };
 }
 
-export async function createForItem(token: string, it: { id: string; title: string; due: string; time?: string }): Promise<string> {
+export async function createForItem(token: string, it: ItemLike): Promise<string> {
   const data = await api(token, "/calendars/primary/events", { method: "POST", body: JSON.stringify(body(it)) });
   return data.id;
 }
 
-export async function updateForItem(token: string, eventId: string, it: { id: string; title: string; due: string; time?: string }) {
+export async function updateForItem(token: string, eventId: string, it: ItemLike) {
   // 종일↔시간 일정이 바뀔 수 있어 start/end를 통째로 바꾸는 PUT 대신 PATCH에 둘 다 넣는다.
   const b = body(it);
   const start = "date" in b.start ? { date: b.start.date, dateTime: null } : { ...b.start, date: null };

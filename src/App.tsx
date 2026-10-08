@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { DEFAULT_SETTINGS, dueLabel, daysUntil, uid, usePersisted } from "./store";
+import { DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, uid, usePersisted } from "./store";
 import type { Action, Item, Msg, Settings } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
@@ -7,7 +7,7 @@ import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconLeft, IconList, IconMore, IconPlus, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconLeft, IconList, IconMore, IconPlus, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
@@ -94,7 +94,7 @@ export default function App() {
       }
       for (const it of items) {
         if (inFlight.current.has(it.id)) continue;
-        const want = it.due ? `${it.title}|${it.due}|${it.time ?? ""}` : "";
+        const want = it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}` : "";
         if (want === (it.calSynced ?? "") && (!!it.calendarEventId === !!want)) continue;
         inFlight.current.add(it.id);
         try {
@@ -191,12 +191,19 @@ export default function App() {
       if (x.due !== undefined) {
         change.due = x.due;
         prev.due = target.due;
-        words.push(x.due ? `마감 → ${x.due}` : "마감 없앰");
+        words.push(x.due ? `일정 → ${x.due}` : "일정 없앰");
       }
       if (x.time !== undefined) {
         change.time = x.time || undefined;
         prev.time = target.time;
         words.push(x.time ? `시간 → ${x.time}` : "시간 없앰");
+      }
+      // 날짜나 시작 시각이 바뀌면 끝나는 시각은 기본값(1시간 뒤 / 같은 날)으로 되돌린다.
+      if (x.due !== undefined || x.time !== undefined) {
+        change.endDate = undefined;
+        change.endTime = undefined;
+        prev.endDate = target.endDate;
+        prev.endTime = target.endTime;
       }
       if (x.done !== undefined) {
         change.done = x.done;
@@ -599,10 +606,10 @@ function ItemRow(props: {
   );
 }
 
-/* ---------------- 마감 날짜 입력 ---------------- */
+/* ---------------- 날짜 입력 ---------------- */
 
 // 아이폰의 날짜 선택기에서 "재설정"을 누르면 기본값으로 돌아가는데,
-// 그 기본값을 비워 두면 재설정이 곧 "마감 없음"이 된다.
+// 그 기본값을 비워 두면 재설정이 곧 "날짜 없음"이 된다.
 function DateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   // 기본값("")은 그대로 두고 화면에 보이는 값만 직접 맞춘다.
@@ -613,11 +620,101 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
     <span className="datefield">
       <input ref={ref} type="date" defaultValue="" onChange={(e) => onChange(e.target.value)} />
       {value && (
-        <button className="x" aria-label="마감 지우기" onClick={() => onChange("")}>
+        <button className="x" aria-label="날짜 지우기" onClick={() => onChange("")}>
           ×
         </button>
       )}
     </span>
+  );
+}
+
+/* ---------------- 일정: 구글 캘린더 일정 편집 화면과 같은 모양 ---------------- */
+
+const fmtDay = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }).replace(/\((.)\)/, "($1)");
+const fmtTime = (t: string) => new Date(`2000-01-01T${t}:00`).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+const today = () => new Date().toLocaleDateString("sv-SE");
+
+// 글자를 누르면 그 자리에 숨겨 둔 날짜/시간 선택기가 열린다.
+function PickText(props: { type: "date" | "time"; value: string; text: string; onChange: (v: string) => void; className?: string }) {
+  return (
+    <label className={`pick ${props.className ?? ""}`}>
+      {props.text}
+      <input
+        type={props.type}
+        value={props.value}
+        onClick={(e) => {
+          try {
+            (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+          } catch {
+            /* 지원 안 하는 브라우저는 기본 동작 */
+          }
+        }}
+        onChange={(e) => e.target.value && props.onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+function ScheduleEditor({ item, update }: { item: Item; update: (fn: (it: Item) => Item) => void }) {
+  if (!item.due)
+    return (
+      <button className="field sched-add" onClick={() => update((it) => ({ ...it, due: today() }))}>
+        <span className="sched-icon"><IconClock /></span>
+        <span className="grow">일정 추가</span>
+        <span className="chev"><IconPlus /></span>
+      </button>
+    );
+  const allDay = !item.time;
+  const end = itemEnd(item);
+  const set = (patch: Partial<Item>) => update((it) => ({ ...it, ...patch }));
+
+  // 구글 캘린더처럼 시작을 옮기면 길이를 유지한 채 끝도 같이 옮긴다.
+  const moveStart = (date: string, time?: string) => {
+    const s0 = new Date(`${item.due}T${item.time ?? "00:00"}:00`).getTime();
+    const e0 = new Date(`${end.date}T${end.time ?? "00:00"}:00`).getTime();
+    const len = Math.max(0, Math.round((e0 - s0) / 60000));
+    const t = time ?? item.time;
+    if (!t) return set({ due: date, endDate: len ? addMinutes(date, "00:00", len).date : undefined });
+    const e = addMinutes(date, t, len || 60);
+    set({ due: date, time: t, endDate: e.date, endTime: e.time });
+  };
+  const setEnd = (date: string, time?: string) => {
+    if (allDay) return set({ endDate: date < item.due ? item.due : date });
+    const t = time ?? end.time!;
+    if (`${date}T${t}` <= `${item.due}T${item.time}`) {
+      const e = addMinutes(item.due, item.time!, 60);
+      return set({ endDate: e.date, endTime: e.time });
+    }
+    set({ endDate: date, endTime: t });
+  };
+  const toggleAllDay = () => {
+    if (allDay) {
+      const h = Math.min(new Date().getHours() + 1, 23);
+      const t = `${String(h).padStart(2, "0")}:00`;
+      const e = addMinutes(item.due, t, 60);
+      set({ time: t, endDate: e.date, endTime: e.time });
+    } else set({ time: undefined, endTime: undefined, endDate: end.date !== item.due ? end.date : undefined });
+  };
+
+  return (
+    <div className="sched">
+      <label className="field">
+        <span className="sched-icon"><IconClock /></span>
+        <span className="grow">종일</span>
+        <input type="checkbox" className="switch" checked={allDay} onChange={toggleAllDay} />
+      </label>
+      <div className="sched-row">
+        <PickText type="date" value={item.due} text={fmtDay(item.due)} onChange={(d) => moveStart(d)} />
+        {!allDay && <PickText type="time" value={item.time!} text={fmtTime(item.time!)} onChange={(t) => moveStart(item.due, t)} className="time" />}
+      </div>
+      <div className="sched-row">
+        <PickText type="date" value={end.date} text={fmtDay(end.date)} onChange={(d) => setEnd(d)} />
+        {!allDay && <PickText type="time" value={end.time!} text={fmtTime(end.time!)} onChange={(t) => setEnd(end.date, t)} className="time" />}
+      </div>
+      <button className="sched-clear" onClick={() => set({ due: "", time: undefined, endDate: undefined, endTime: undefined })}>
+        일정 지우기
+      </button>
+    </div>
   );
 }
 
@@ -648,7 +745,7 @@ function ItemView(props: {
   const last = item.chat[item.chat.length - 1];
   const plain = (t: string) => t.replace(/[*`#]/g, "");
   const metaBits = [
-    item.due ? dueLabel(item.due) + (item.time ? ` ${item.time}` : "") : "마감 없음",
+    item.due ? `${fmtDay(item.due)}${item.time ? " " + fmtTime(item.time) : ""}` : "일정 없음",
     item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "",
     item.due && props.gToken ? (item.calendarEventId ? "캘린더에 있음" : "캘린더에 올리는 중") : "",
   ].filter(Boolean);
@@ -691,19 +788,10 @@ function ItemView(props: {
 
       {showInfo && (
         <div className="fields">
-          <div className="field">
-            <span>마감</span>
-            <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v, time: v ? it.time : undefined }))} />
-          </div>
-          {item.due && (
-            <div className="field">
-              <span>시간</span>
-              <input type="time" className="timefield" value={item.time ?? ""} onChange={(e) => update((it) => ({ ...it, time: e.target.value || undefined }))} />
-            </div>
-          )}
+          <ScheduleEditor item={item} update={update} />
           {item.due && !props.gToken && (
             <div className="field">
-              <span>구글 캘린더</span>
+              <span className="field-label">구글 캘린더</span>
               <a className="secondary small btnlink" href={gcal.addLink(item.title, item.due)} target="_blank" rel="noreferrer">
                 캘린더에 넣기
               </a>

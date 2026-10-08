@@ -63,3 +63,9 @@ export const IconCheck = () => (
     <path d="m5 12.5 4.5 4.5L19 7.5" />
   </svg>
 );
+export const IconClock = () => (
+  <svg {...base} aria-hidden="true">
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </svg>
+);

@@ -19,7 +19,9 @@ export type Item = {
   updatedAt: number;
   subtasks: Subtask[];
   chat: Msg[];
-  time?: string; // "HH:MM", 없으면 종일
+  time?: string; // 시작 시각 "HH:MM", 없으면 종일
+  endDate?: string; // 끝나는 날 (없으면 due와 같은 날)
+  endTime?: string; // 끝나는 시각 (없으면 시작 1시간 뒤)
   calendarEventId?: string;
   calSynced?: string; // 마지막으로 캘린더에 반영한 제목/날짜/시간
 };
@@ -73,7 +75,23 @@ export function dueLabel(due: string): string {
   const n = daysUntil(due);
   if (n === null) return "";
   if (n < 0) return `${-n}일 지남`;
-  if (n === 0) return "오늘까지";
-  if (n === 1) return "내일까지";
-  return `${n}일 남음`;
+  if (n === 0) return "오늘";
+  if (n === 1) return "내일";
+  return `${n}일 후`;
+}
+
+// 시작 시각에 분을 더한 "HH:MM" (하루를 넘기면 다음 날로 넘어간 날짜도 함께)
+export function addMinutes(date: string, time: string, min: number): { date: string; time: string } {
+  const d = new Date(`${date}T${time}:00`);
+  d.setMinutes(d.getMinutes() + min);
+  return { date: d.toLocaleDateString("sv-SE"), time: d.toTimeString().slice(0, 5) };
+}
+// 일정의 끝 (종일이면 time 없음)
+export function itemEnd(it: Pick<Item, "due" | "time" | "endDate" | "endTime">): { date: string; time?: string } {
+  if (!it.time) return { date: it.endDate && it.endDate >= it.due ? it.endDate : it.due };
+  if (it.endTime) {
+    const date = it.endDate ?? it.due;
+    if (`${date}T${it.endTime}` > `${it.due}T${it.time}`) return { date, time: it.endTime };
+  }
+  return addMinutes(it.due, it.time, 60);
 }

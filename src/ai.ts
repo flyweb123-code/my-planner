@@ -32,7 +32,7 @@ function describeItem(it: Item, notes?: { perChat: number; maxLen: number; skip?
   const subs = it.subtasks.length
     ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}`).join("\n")
     : "  (아직 없음)";
-  return `제목: ${it.title}\n마감: ${it.due || "없음"}${it.time ? " " + it.time : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}${notes ? talkNotes(it, notes.perChat, notes.maxLen, notes.skip) : ""}`;
+  return `제목: ${it.title}\n일정: ${it.due || "없음"}${it.time ? " " + it.time + (it.endTime ? "~" + it.endTime : "") : ""}${!it.time && it.endDate && it.endDate !== it.due ? " ~ " + it.endDate : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}${notes ? talkNotes(it, notes.perChat, notes.maxLen, notes.skip) : ""}`;
 }
 
 const Suggestions = z.object({
@@ -168,7 +168,7 @@ const homeTools = (): Anthropic.Tool[] => {
         type: "object" as const,
         properties: {
           title: { type: "string", description: "짧은 한국어 제목" },
-          due: { type: "string", description: "마감 또는 예정 날짜 YYYY-MM-DD. 말하지 않았으면 생략" },
+          due: { type: "string", description: "일정 날짜(할 날, 약속 날, 마감일) YYYY-MM-DD. 말하지 않았으면 생략" },
           time: { type: "string", description: "정해진 시각이 있으면 24시간 HH:MM (예: 15:00). 없으면 생략" },
           note: { type: "string", description: "시간, 장소 같은 부가 정보. 없으면 생략" },
           subtasks: { type: "array", items: { type: "string" }, description: "처음부터 넣을 세부 업무. 사용자가 말한 것만" },
@@ -194,13 +194,13 @@ const homeTools = (): Anthropic.Tool[] => {
     },
     {
       name: "update_item",
-      description: "기존 할 일의 제목, 마감을 바꾸거나 완료 처리한다. 마감을 없애려면 due를 빈 문자열로 준다.",
+      description: "기존 할 일의 제목, 일정 날짜/시간을 바꾸거나 완료 처리한다. 일정을 없애려면 due를 빈 문자열로 준다.",
       input_schema: {
         type: "object" as const,
         properties: {
           item_id: { type: "string" },
           title: { type: "string" },
-          due: { type: "string", description: "YYYY-MM-DD, 또는 마감 없애기는 빈 문자열" },
+          due: { type: "string", description: "YYYY-MM-DD, 또는 일정 없애기는 빈 문자열" },
           time: { type: "string", description: "HH:MM, 또는 시간 없애기는 빈 문자열" },
           done: { type: "boolean" },
         },
@@ -242,11 +242,11 @@ export async function homeChat(
     "사용자가 일정이나 해야 할 일을 말하면 묻지 말고 바로 도구로 정리한다:\n" +
     "- 기존 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
     "- 관련된 할 일이 없으면 add_item으로 새로 만든다. '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다.\n" +
-    "- 마감 변경, 완료 같은 말은 update_item을 쓴다.\n" +
+    "- 일정 변경, 완료 같은 말은 update_item을 쓴다.\n" +
     "- 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
     (calendar ? "- 날짜가 있는 할 일은 앱이 구글 캘린더에 자동으로 올린다. 따로 캘린더에 넣을 필요 없다.\n" : "") +
     "도구를 쓴 뒤에는 무엇을 어디에 넣었는지 한두 문장으로 알려 준다. 그냥 질문이나 잡담이면 도구 없이 답한다. " +
-    "지금 무엇을 해야 할지 물으면 마감과 캘린더를 보고 하나를 골라 준다.\n\n" +
+    "지금 무엇을 해야 할지 물으면 일정과 캘린더를 보고 하나를 골라 준다.\n\n" +
     `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}`;
 
   const messages: Anthropic.MessageParam[] = [...historyFor(past), { role: "user", content: userText }];
@@ -306,8 +306,8 @@ export async function checkKey(s: Settings): Promise<string> {
 
 const Briefing = z.object({
   now: z.object({ text: z.string().describe("지금 바로 하면 좋은 한 가지와 짧은 이유. 한 문장"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
-  missed: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("놓친 것: 마감이 지났거나 오늘인데 안 한 일, 오래 손대지 않은 일. 없으면 빈 배열. 최대 3개"),
-  check: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("확인할 것: 다가오는 일정 준비, 마감이 없어 정해야 할 일, 진행 상황 업데이트가 필요한 일. 최대 3개"),
+  missed: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일, 오래 손대지 않은 일. 없으면 빈 배열. 최대 3개"),
+  check: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("확인할 것: 다가오는 일정 준비, 날짜가 없어 정해야 할 일, 진행 상황 업데이트가 필요한 일. 최대 3개"),
 });
 export type Briefing = z.infer<typeof Briefing>;
 
@@ -341,15 +341,15 @@ export function simpleBriefing(items: Item[]): Briefing {
   const week = Date.now() - 7 * 86400000;
   return {
     now: first
-      ? { text: `${first.title}${first.due ? ` (마감 ${first.due})` : ""}부터 해 보세요.`, item_id: first.id }
+      ? { text: `${first.title}${first.due ? ` (${first.due})` : ""}부터 해 보세요.`, item_id: first.id }
       : { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "" },
     missed: open
       .filter((i) => i.due && i.due < today)
       .slice(0, 3)
-      .map((i) => ({ text: `'${i.title}' 마감이 지났어요.`, item_id: i.id })),
+      .map((i) => ({ text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id })),
     check: [
       ...open.filter((i) => i.updatedAt < week).map((i) => ({ text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
-      ...open.filter((i) => !i.due).map((i) => ({ text: `'${i.title}' 마감을 정할까요?`, item_id: i.id })),
+      ...open.filter((i) => !i.due).map((i) => ({ text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id })),
     ].slice(0, 3),
   };
 }
