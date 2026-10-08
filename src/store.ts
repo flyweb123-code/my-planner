@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number };
-export type Msg = { role: "user" | "assistant"; text: string; ts: number };
+export type Msg = {
+  role: "user" | "assistant";
+  text: string;
+  ts: number;
+  suggestions?: { title: string; why: string; added?: boolean }[];
+};
 export type Item = {
   id: string;
   title: string;

@@ -20,31 +20,76 @@ function describeItem(it: Item) {
   return `제목: ${it.title}\n마감: ${it.due || "없음"}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}`;
 }
 
-const ChatReply = z.object({
-  reply: z.string().describe("사용자에게 하는 답변. 짧고 친근한 한국어."),
-  suggested_subtasks: z
-    .array(z.object({ title: z.string(), why: z.string() }))
-    .describe("새로 추가하면 좋은 세부 업무. 이미 있는 것과 겹치면 넣지 않는다. 필요 없으면 빈 배열."),
+const Suggestions = z.object({
+  subtasks: z.array(z.object({ title: z.string(), why: z.string() })),
 });
-export type ChatReply = z.infer<typeof ChatReply>;
+export type Suggestion = z.infer<typeof Suggestions>["subtasks"][number];
 
-export async function chatInItem(s: Settings, item: Item, userText: string): Promise<ChatReply> {
-  const history = item.chat.slice(-20).map((m) => ({ role: m.role, content: m.text }));
-  const res = await client(s).messages.parse({
+const suggestTool = {
+  name: "suggest_subtasks",
+  description:
+    "대화 중에 이 일을 끝내는 데 필요한 구체적인 세부 업무가 떠오르면 사용자에게 추가 버튼으로 제안한다. " +
+    "이미 목록에 있는 것은 넣지 않는다. 사용자가 세부 업무를 나눠 달라고 하거나 계획을 세울 때 쓰고, 그냥 잡담이나 질문에 답할 때는 쓰지 않는다.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      subtasks: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "동사로 끝나는 짧은 한국어 세부 업무" },
+            why: { type: "string", description: "왜 필요한지 한 문장" },
+          },
+          required: ["title", "why"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["subtasks"],
+    additionalProperties: false,
+  },
+  eager_input_streaming: true,
+};
+
+// Claude 앱처럼 답을 실시간으로 받아 보여 준다. 세부 업무 제안은 도구 호출로 따로 받는다.
+export async function streamChat(
+  s: Settings,
+  item: Item,
+  onText: (textSoFar: string) => void,
+): Promise<{ text: string; suggestions: Suggestion[] }> {
+  const history = item.chat.slice(-30).map((m) => ({ role: m.role, content: m.text }));
+  const stream = client(s).messages.stream({
     model: s.model,
-    max_tokens: 16000,
-    output_config: { effort: "low", format: zodOutputFormat(ChatReply) },
+    max_tokens: 64000,
+    output_config: { effort: "low" },
     system:
-      "너는 사용자의 개인 비서다. 사용자가 앞으로 할 일 하나에 대해 이야기한다. " +
-      "그 일을 끝내려면 무엇이 필요한지 같이 생각하고, 구체적이고 바로 실행할 수 있는 세부 업무를 제안한다. " +
-      "세부 업무 제목은 동사로 끝나는 짧은 한국어로 쓴다.\n\n" +
-      `지금: ${fmtNow()}\n\n현재 항목:\n${describeItem(item)}`,
-    messages: [...history, { role: "user", content: userText }],
+      "너는 사용자의 개인 비서이자 대화 상대다. 사용자는 앞으로 할 일 하나에 대해 너와 편하게 이야기한다. " +
+      "Claude 앱에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
+      "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. 도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
+      `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item)}`,
+    tools: [suggestTool],
+    tool_choice: { type: "auto" },
+    messages: history,
   });
-  if (res.stop_reason === "refusal" || !res.parsed_output) {
-    return { reply: "이 요청에는 답을 만들지 못했어요. 다르게 말해 주시겠어요?", suggested_subtasks: [] };
+  let text = "";
+  stream.on("text", (delta) => {
+    text += delta;
+    onText(text);
+  });
+  const final = await stream.finalMessage();
+  if (final.stop_reason === "refusal" && !text) {
+    text = "이 요청에는 답을 만들지 못했어요. 다르게 말해 주시겠어요?";
   }
-  return res.parsed_output;
+  const suggestions: Suggestion[] = [];
+  for (const block of final.content) {
+    if (block.type === "tool_use" && block.name === "suggest_subtasks") {
+      const parsed = Suggestions.safeParse(block.input);
+      if (parsed.success) suggestions.push(...parsed.data.subtasks);
+    }
+  }
+  if (!text && suggestions.length) text = "이렇게 나눠 보면 어떨까요?";
+  return { text, suggestions };
 }
 
 const Briefing = z.object({

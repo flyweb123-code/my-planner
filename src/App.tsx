@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_SETTINGS, dueLabel, daysUntil, uid, usePersisted } from "./store";
 import type { Item, Settings } from "./store";
-import { chatInItem, makeBriefing, simpleBriefing } from "./ai";
-import type { Briefing, ChatReply } from "./ai";
+import { makeBriefing, simpleBriefing, streamChat } from "./ai";
+import type { Briefing } from "./ai";
+import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -37,10 +38,10 @@ export default function App() {
   };
 
   const open = (id: string) => id && items.some((i) => i.id === id) && setView({ name: "item", id });
-  const current = view.name === "item" ? items.find((i) => i.id === view.id) : undefined;
+  const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
   return (
-    <div className="app">
+    <div className={`app ${view.name === "chat" ? "in-chat" : ""}`}>
       <main>
         {view.name === "home" && (
           <Home items={items} events={events} settings={settings} gConnected={!!gToken} onConnect={connectGoogle} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
@@ -49,8 +50,8 @@ export default function App() {
         {view.name === "item" && current && (
           <ItemView
             item={current}
-            settings={settings}
             gToken={gToken}
+            onChat={() => setView({ name: "chat", id: current.id })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
               setItems((all) => all.filter((i) => i.id !== current.id));
@@ -59,10 +60,14 @@ export default function App() {
             onBack={() => setView({ name: "list" })}
           />
         )}
+        {view.name === "chat" && current && (
+          <ChatView item={current} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+        )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} gConnected={!!gToken} onConnect={connectGoogle} />
         )}
       </main>
+      {view.name !== "chat" && (
       <nav className="tabs">
         <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
           <span>🏠</span>홈
@@ -74,6 +79,7 @@ export default function App() {
           <span>⚙️</span>설정
         </button>
       </nav>
+      )}
     </div>
   );
 }
@@ -239,7 +245,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
       </header>
       <div className="add">
         <input placeholder="앞으로 할 일을 적어 보세요" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
-        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+        <DateField value={due} onChange={setDue} />
         <button onClick={add}>추가</button>
       </div>
       {open.length === 0 && <p className="muted">아직 할 일이 없어요.</p>}
@@ -293,45 +299,44 @@ function ItemRow({ it, onOpen }: { it: Item; onOpen: (id: string) => void }) {
   );
 }
 
-/* ---------------- 항목 상세: 세부 업무 + Claude와 대화 ---------------- */
+/* ---------------- 마감 날짜 입력 ---------------- */
+
+// 아이폰의 날짜 선택기에서 "재설정"을 누르면 기본값으로 돌아가는데,
+// 그 기본값을 비워 두면 재설정이 곧 "마감 없음"이 된다.
+function DateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  // 기본값("")은 그대로 두고 화면에 보이는 값만 직접 맞춘다.
+  useLayoutEffect(() => {
+    if (ref.current && ref.current.value !== value) ref.current.value = value;
+  }, [value]);
+  return (
+    <span className="datefield">
+      <input ref={ref} type="date" defaultValue="" onChange={(e) => onChange(e.target.value)} />
+      {value && (
+        <button className="x" aria-label="마감 지우기" onClick={() => onChange("")}>
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+/* ---------------- 항목 상세: 세부 업무 ---------------- */
 
 function ItemView(props: {
   item: Item;
-  settings: Settings;
   gToken: string | null;
   update: (fn: (it: Item) => Item) => void;
   onDelete: () => void;
   onBack: () => void;
+  onChat: () => void;
 }) {
-  const { item, update, settings } = props;
+  const { item, update } = props;
   const [newSub, setNewSub] = useState("");
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
-  const [suggestions, setSuggestions] = useState<ChatReply["suggested_subtasks"]>([]);
-  const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [item.chat.length]);
-
-  const addSub = (title: string, byClaude = false) =>
-    update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude, createdAt: Date.now() }] }));
-
-  const send = async (text: string) => {
-    if (!text.trim() || busy) return;
-    setMsg("");
-    setBusy(true);
-    const userMsg = { role: "user" as const, text: text.trim(), ts: Date.now() };
-    update((it) => ({ ...it, chat: [...it.chat, userMsg] }));
-    try {
-      const r = await chatInItem(settings, item, text.trim());
-      update((it) => ({ ...it, chat: [...it.chat, { role: "assistant", text: r.reply, ts: Date.now() }] }));
-      setSuggestions(r.suggested_subtasks);
-    } catch (e) {
-      update((it) => ({ ...it, chat: [...it.chat, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }] }));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const addSub = (title: string) =>
+    update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
 
   const syncCalendar = async () => {
     if (!props.gToken || !item.due) return;
@@ -343,6 +348,8 @@ function ItemView(props: {
       toast((e as Error).message);
     }
   };
+
+  const last = item.chat[item.chat.length - 1];
 
   return (
     <section className="detail">
@@ -358,7 +365,7 @@ function ItemView(props: {
       <input className="title-input" value={item.title} onChange={(e) => update((it) => ({ ...it, title: e.target.value }))} />
       <div className="row">
         <label>
-          마감 <input type="date" value={item.due} onChange={(e) => update((it) => ({ ...it, due: e.target.value }))} />
+          마감 <DateField value={item.due} onChange={(v) => update((it) => ({ ...it, due: v }))} />
         </label>
         <label className="check">
           <input type="checkbox" checked={item.done} onChange={(e) => update((it) => ({ ...it, done: e.target.checked }))} /> 완료
@@ -370,6 +377,14 @@ function ItemView(props: {
         )}
       </div>
       <textarea placeholder="메모" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
+
+      <button className="chat-entry" onClick={props.onChat}>
+        <span className="grow">
+          <strong>Claude와 대화하기</strong>
+          <span className="muted small preview">{last ? `${last.role === "user" ? "나: " : ""}${last.text}` : "이 일에 대해 편하게 이야기해 보세요"}</span>
+        </span>
+        <span className="chev">›</span>
+      </button>
 
       <h3>세부 업무</h3>
       <ul className="subs">
@@ -397,71 +412,148 @@ function ItemView(props: {
           }}
         />
       </div>
+    </section>
+  );
+}
 
-      <h3>Claude와 이야기하기</h3>
-      <div className="chat">
-        {item.chat.length === 0 && (
-          <div className="starter">
-            <p className="muted">이 일에 대해 이야기하면 Claude가 필요한 세부 업무를 정리해 줘요.</p>
-            <button className="secondary" onClick={() => send("이 일을 끝내려면 뭘 해야 할지 세부 업무로 나눠 줘.")} disabled={busy}>
-              세부 업무 나눠 줘
-            </button>
-          </div>
-        )}
-        {item.chat.map((m, i) => (
-          <div key={i} className={`bubble ${m.role}`}>
-            {m.text}
-          </div>
-        ))}
-        {busy && <div className="bubble assistant typing">생각 중…</div>}
-        {suggestions.length > 0 && (
-          <div className="suggest">
-            <p className="label">Claude가 제안한 세부 업무</p>
-            {suggestions.map((s, i) => (
-              <div key={i} className="sugg">
-                <div className="grow">
-                  <strong>{s.title}</strong>
-                  <p className="muted small">{s.why}</p>
-                </div>
-                <button
-                  className="small"
-                  onClick={() => {
-                    addSub(s.title, true);
-                    setSuggestions((a) => a.filter((_, j) => j !== i));
-                  }}
-                >
-                  추가
+/* ---------------- Claude와 대화 ---------------- */
+
+function ChatView(props: { item: Item; settings: Settings; update: (fn: (it: Item) => Item) => void; onBack: () => void }) {
+  const { item, update, settings } = props;
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [streaming, setStreaming] = useState("");
+  const endRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [item.chat.length, streaming]);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, [msg]);
+
+  const send = async (text: string) => {
+    text = text.trim();
+    if (!text || busy) return;
+    setMsg("");
+    setBusy(true);
+    setStreaming("");
+    const withUser: Item = { ...item, chat: [...item.chat, { role: "user", text, ts: Date.now() }] };
+    update(() => withUser);
+    try {
+      const r = await streamChat(settings, withUser, setStreaming);
+      update((it) => ({
+        ...it,
+        chat: [...it.chat, { role: "assistant", text: r.text, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }],
+      }));
+    } catch (e) {
+      update((it) => ({ ...it, chat: [...it.chat, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }] }));
+    } finally {
+      setStreaming("");
+      setBusy(false);
+    }
+  };
+
+  const addSuggestion = (msgIdx: number, sIdx: number | "all") =>
+    update((it) => {
+      const m = it.chat[msgIdx];
+      if (!m?.suggestions) return it;
+      const picked = m.suggestions.filter((s, j) => !s.added && (sIdx === "all" || j === sIdx));
+      return {
+        ...it,
+        subtasks: [...it.subtasks, ...picked.map((s) => ({ id: uid(), title: s.title, done: false, byClaude: true, createdAt: Date.now() }))],
+        chat: it.chat.map((x, i) =>
+          i === msgIdx ? { ...x, suggestions: x.suggestions!.map((s, j) => (sIdx === "all" || j === sIdx ? { ...s, added: true } : s)) } : x,
+        ),
+      };
+    });
+
+  const doneCount = item.subtasks.filter((s) => s.done).length;
+
+  return (
+    <section className="chatview">
+      <header className="chat-head">
+        <button className="ghost" onClick={props.onBack}>
+          ←
+        </button>
+        <div className="grow">
+          <strong>{item.title}</strong>
+          <span className="muted small">
+            {item.subtasks.length ? `세부 업무 ${doneCount}/${item.subtasks.length}` : "세부 업무 없음"}
+            {item.due ? ` · ${dueLabel(item.due)}` : ""}
+          </span>
+        </div>
+      </header>
+
+      <div className="thread">
+        {item.chat.length === 0 && !busy && (
+          <div className="empty">
+            <p>이 일에 대해 무엇이든 이야기해 보세요.</p>
+            <div className="chips">
+              {["이 일을 세부 업무로 나눠 줘", "어디서부터 시작하면 좋을까?", "이번 주 안에 끝내려면 어떻게 해야 해?"].map((t) => (
+                <button key={t} className="chip" onClick={() => send(t)} disabled={!settings.apiKey}>
+                  {t}
                 </button>
-              </div>
-            ))}
-            <button
-              className="link"
-              onClick={() => {
-                suggestions.forEach((s) => addSub(s.title, true));
-                setSuggestions([]);
-              }}
-            >
-              모두 추가
-            </button>
+              ))}
+            </div>
           </div>
         )}
+        {item.chat.map((m, i) =>
+          m.role === "user" ? (
+            <div key={i} className="msg user">
+              {m.text}
+            </div>
+          ) : (
+            <div key={i} className="msg assistant">
+              <Markdown text={m.text} />
+              {m.suggestions && (
+                <div className="suggest">
+                  <p className="label">세부 업무 제안</p>
+                  {m.suggestions.map((s, j) => (
+                    <div key={j} className="sugg">
+                      <div className="grow">
+                        <strong>{s.title}</strong>
+                        <p className="muted small">{s.why}</p>
+                      </div>
+                      <button className="small" disabled={s.added} onClick={() => addSuggestion(i, j)}>
+                        {s.added ? "추가됨" : "추가"}
+                      </button>
+                    </div>
+                  ))}
+                  {m.suggestions.some((s) => !s.added) && (
+                    <button className="link" onClick={() => addSuggestion(i, "all")}>
+                      모두 추가
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ),
+        )}
+        {busy && <div className="msg assistant">{streaming ? <Markdown text={streaming} /> : <span className="typing">●●●</span>}</div>}
         <div ref={endRef} />
       </div>
+
       <div className="composer">
         <textarea
+          ref={boxRef}
           rows={1}
-          placeholder={settings.apiKey ? "무엇이 필요한지 이야기해 보세요" : "설정에서 API 키를 넣어 주세요"}
+          placeholder={settings.apiKey ? "Claude에게 메시지 보내기" : "설정에서 API 키를 넣어 주세요"}
           value={msg}
+          disabled={!settings.apiKey}
           onChange={(e) => setMsg(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // 컴퓨터에서는 Enter로 보내고 Shift+Enter로 줄바꿈. 휴대폰에서는 보내기 버튼 사용.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && window.matchMedia("(pointer: fine)").matches) {
               e.preventDefault();
               send(msg);
             }
           }}
         />
-        <button onClick={() => send(msg)} disabled={busy || !msg.trim()}>
-          보내기
+        <button className="send" aria-label="보내기" onClick={() => send(msg)} disabled={busy || !msg.trim()}>
+          ↑
         </button>
       </div>
     </section>
