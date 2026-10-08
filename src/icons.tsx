@@ -69,3 +69,14 @@ export const IconClock = () => (
     <path d="M12 7.5V12l3 2" />
   </svg>
 );
+export const IconMenu = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M4 7h16M4 12h10M4 17h16" />
+  </svg>
+);
+export const IconCompose = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M12 4H7a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-5" />
+    <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z" />
+  </svg>
+);

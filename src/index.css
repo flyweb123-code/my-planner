@@ -385,4 +385,33 @@ html, body { overscroll-behavior-y: none; }
 /* 입력 중(키보드가 올라온 상태)에는 탭 바를 숨기고 입력창을 맨 아래로 */
 .app.kb-open .tabs { display: none; }
 .app.kb-open .composer { bottom: calc(8px + env(safe-area-inset-bottom)); }
-.app.kb-open { padding-bottom: 16px; }
+
+/* ---------- 홈 머리줄과 왼쪽 채팅 목록 ---------- */
+.home-head { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; margin: 0 -12px; padding: calc(6px + env(safe-area-inset-top)) 4px 6px; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.home-head strong { font-size: 16px; font-weight: 700; }
+.home-head .icon-btn:disabled { opacity: .35; }
+.drawer-wrap { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / 35%); animation: fade .18s ease; }
+.drawer { position: absolute; top: 0; bottom: 0; left: 0; width: min(320px, 84vw); background: var(--surface); box-shadow: var(--shadow); display: flex; flex-direction: column; padding: calc(10px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)); animation: slide-in .22s ease; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes slide-in { from { transform: translateX(-100%); } }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 8px 8px; }
+.drawer-head strong { font-size: 20px; font-weight: 700; }
+.new-chat { display: flex; align-items: center; gap: 10px; width: 100%; background: var(--accent-soft); color: var(--accent); border-radius: var(--r); padding: 12px 14px; font-size: 15px; }
+.new-chat svg { width: 20px; height: 20px; }
+.drawer-list { flex: 1; overflow-y: auto; margin-top: 12px; }
+.drawer-label { font-size: 12px; font-weight: 600; color: var(--faint); margin: 14px 8px 6px; }
+.threads-list { list-style: none; margin: 0; padding: 0; }
+.threads-list .swipe { border-radius: 10px; }
+.threads-list .swipe-body { padding: 11px 10px; font-size: 15px; }
+.threads-list .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.threads-list .grow.on { font-weight: 700; color: var(--accent); }
+
+/* ---------- 대화 화면: 보이는 영역에 고정 (키보드가 올라와도 입력창이 가려지지 않게) ---------- */
+.homechat, .chatview { position: fixed; left: 0; right: 0; top: var(--vvtop, 0px); height: var(--vvh, 100dvh); min-height: 0; max-width: 640px; margin: 0 auto; padding: 0 20px; display: flex; flex-direction: column; }
+.homechat { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+.chatview { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+.app.kb-open .homechat, .app.kb-open .chatview { padding-bottom: 8px; }
+.homechat .thread, .chatview .thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 -20px; padding: 12px 20px 16px; }
+.homechat .composer, .chatview .composer { position: relative; bottom: auto; flex: 0 0 auto; margin: 0; }
+.home-head { position: relative; flex: 0 0 auto; margin: 0 -8px; }
+.chat-head { position: relative; flex: 0 0 auto; margin: 0 -20px; }

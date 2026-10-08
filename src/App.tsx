@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, uid, usePersisted } from "./store";
+import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, uid, usePersisted } from "./store";
 import type { Action, Item, Msg, Settings } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
@@ -7,7 +7,7 @@ import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconLeft, IconList, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
@@ -15,12 +15,75 @@ type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } |
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
   const [settings, setSettings] = usePersisted<Settings>("settings", DEFAULT_SETTINGS);
-  const [homeChat, setHomeChat] = usePersisted<Msg[]>("homeChat", []);
+  // 홈 대화: 여러 채팅으로 나눠 저장한다. 앱을 열면 항상 새 채팅으로 시작한다.
+  const [threads, setThreads] = usePersisted<HomeThread[]>("homeChats", []);
+  const [activeId, setActiveId] = useState(() => uid());
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => {
+    // 예전 한 줄짜리 홈 대화가 있으면 채팅 하나로 옮긴다
+    try {
+      const old = JSON.parse(localStorage.getItem("homeChat") ?? "[]") as Msg[];
+      if (Array.isArray(old) && old.length) {
+        const first = old[0].ts || Date.now();
+        setThreads((ts) => [{ id: uid(), title: threadTitle(old), createdAt: first, updatedAt: old[old.length - 1].ts || first, msgs: old }, ...ts]);
+      }
+      localStorage.removeItem("homeChat");
+    } catch {
+      /* 무시 */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const homeChat = threads.find((t) => t.id === activeId)?.msgs ?? [];
+  const setHomeChat = useCallback(
+    (fn: (m: Msg[]) => Msg[]) =>
+      setThreads((ts) => {
+        const now = Date.now();
+        const t = ts.find((x) => x.id === activeId);
+        const msgs = fn(t?.msgs ?? []);
+        if (!t) return msgs.length ? [{ id: activeId, title: threadTitle(msgs), createdAt: now, updatedAt: now, msgs }, ...ts] : ts;
+        return ts.map((x) => (x.id === activeId ? { ...x, msgs, updatedAt: now, title: x.title || threadTitle(msgs) } : x));
+      }),
+    [activeId, setThreads],
+  );
+  // 다른 화면의 클론이 참고할 최근 홈 대화 (모든 채팅에서 최근 것)
+  const recentHome = threads
+    .flatMap((t) => t.msgs)
+    .sort((a, b) => a.ts - b.ts)
+    .slice(-6);
   const [view, setView] = useState<View>({ name: "home" });
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
+
+  // 대화 화면은 실제로 보이는 영역(키보드를 뺀 높이)에 딱 맞춰 고정한다.
+  // 아이폰은 키보드가 올라올 때 화면 전체를 위로 밀어 올리는데, 그러면 입력창이 가려진다.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+      document.documentElement.style.setProperty("--vvtop", `${vv.offsetTop}px`);
+    };
+    // 일반 화면의 입력칸은 키보드가 올라온 뒤에도 보이도록 가운데로 옮긴다.
+    const keepFocusVisible = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || !el.matches("input, textarea") || el.closest(".homechat, .chatview")) return;
+      const r = el.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > vv.height) el.scrollIntoView({ block: "center" });
+    };
+    const onResize = () => {
+      apply();
+      setTimeout(keepFocusVisible, 50);
+    };
+    apply();
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", apply);
+    };
+  }, []);
 
   // 아이폰에서 키보드가 올라오면 화면 아래에 붙은 탭 바도 키보드 위로 같이 올라온다.
   // 글자를 입력하는 동안에는 탭 바를 숨기고, 입력창이 키보드 바로 위에 붙게 한다.
@@ -251,6 +314,9 @@ export default function App() {
       <main>
         {view.name === "home" && (
           <HomeChat
+            key={activeId}
+            onMenu={() => setDrawer(true)}
+            onNewChat={() => setActiveId(uid())}
             items={items}
             events={events}
             settings={settings}
@@ -279,7 +345,7 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} world={{ items, events, home: homeChat }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
           <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
@@ -289,6 +355,27 @@ export default function App() {
         )}
       </main>
       <PullToRefresh />
+      {drawer && (
+        <ChatDrawer
+          threads={threads}
+          activeId={activeId}
+          onPick={(id) => {
+            setActiveId(id);
+            setView({ name: "home" });
+            setDrawer(false);
+          }}
+          onNew={() => {
+            setActiveId(uid());
+            setView({ name: "home" });
+            setDrawer(false);
+          }}
+          onDelete={(id) => {
+            setThreads((ts) => ts.filter((t) => t.id !== id));
+            if (id === activeId) setActiveId(uid());
+          }}
+          onClose={() => setDrawer(false)}
+        />
+      )}
       {view.name !== "chat" && (
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
@@ -318,6 +405,8 @@ export default function App() {
 let briefCache: { at: number; brief: Briefing } | null = null;
 
 function HomeChat(props: {
+  onMenu: () => void;
+  onNewChat: () => void;
   items: Item[];
   events: CalEvent[];
   settings: Settings;
@@ -337,7 +426,7 @@ function HomeChat(props: {
   const endRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [chat.length, streaming]);
+  useStickToBottom(endRef, [chat.length, streaming]);
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -372,8 +461,8 @@ function HomeChat(props: {
     setChat((c) => c.map((m, i) => (i === mi ? { ...m, actions: m.actions!.map((x, j) => (j === ai ? { ...x, undone: true } : x)) } : m)));
   };
 
-  // 홈을 열 때마다 비서가 먼저 말을 건다: 지금 할 일, 놓친 것, 확인할 것. 30분 동안은 다시 묻지 않는다.
-  const [sessionStart] = useState(chat.length);
+  // 새 채팅에서는 비서가 먼저 말을 건다: 지금 할 일, 놓친 것, 확인할 것. 30분 동안은 다시 묻지 않는다.
+  const [fresh] = useState(chat.length === 0);
   const [brief, setBrief] = useState<Briefing | null>(() => briefCache?.brief ?? null);
   const [briefLoading, setBriefLoading] = useState(false);
   useEffect(() => {
@@ -443,11 +532,11 @@ function HomeChat(props: {
                 확인할 것 <span className="label-hint">왼쪽으로 밀면 잠시 숨겨요</span>
               </p>
               <ul className="blist">
-                {checks.map((m) => (
+                {checks.map((m, i) => (
                   <SwipeRow
-                    key={snoozeKey(m)}
-                    open={swipedBrief === snoozeKey(m)}
-                    onOpenChange={(o) => setSwipedBrief(o ? snoozeKey(m) : null)}
+                    key={`${i}-${m.text}`}
+                    open={swipedBrief === `${i}-${m.text}`}
+                    onOpenChange={(o) => setSwipedBrief(o ? `${i}-${m.text}` : null)}
                     onTap={() => settings.apiKey && ask(m.text)}
                     actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
                   >
@@ -469,6 +558,15 @@ function HomeChat(props: {
 
   return (
     <section className="homechat">
+      <header className="home-head">
+        <button className="icon-btn" aria-label="채팅 목록" onClick={props.onMenu}>
+          <IconMenu />
+        </button>
+        <strong>클론</strong>
+        <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
+          <IconCompose />
+        </button>
+      </header>
       {props.calExpired && (
         <button className="reconnect" onClick={props.onReconnect}>
           캘린더 연결이 끝났어요 · 다시 연결
@@ -476,9 +574,8 @@ function HomeChat(props: {
       )}
 
       <div className="thread">
-        {chat.slice(0, sessionStart).length === 0 && briefing}
+        {fresh && briefing}
         {chat.map((m, i) => [
-          i === sessionStart && sessionStart > 0 ? <div key="brief">{briefing}</div> : null,
           m.role === "user" ? (
             <div key={i} className="msg user">
               {m.text}
@@ -530,6 +627,69 @@ function HomeChat(props: {
         </button>
       </div>
     </section>
+  );
+}
+
+/* ---------------- 왼쪽 채팅 목록 ---------------- */
+
+const threadTitle = (msgs: Msg[]) => {
+  const first = msgs.find((m) => m.role === "user")?.text ?? "새 채팅";
+  return first.length > 30 ? first.slice(0, 30) + "…" : first;
+};
+
+function ChatDrawer(props: {
+  threads: HomeThread[];
+  activeId: string;
+  onPick: (id: string) => void;
+  onNew: () => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [swiped, setSwiped] = useState<string | null>(null);
+  const sorted = [...props.threads].sort((a, b) => b.updatedAt - a.updatedAt);
+  const startOfToday = new Date().setHours(0, 0, 0, 0);
+  const groups: [string, HomeThread[]][] = [
+    ["오늘", sorted.filter((t) => t.updatedAt >= startOfToday)],
+    ["이전 7일", sorted.filter((t) => t.updatedAt < startOfToday && t.updatedAt >= startOfToday - 7 * 864e5)],
+    ["그 이전", sorted.filter((t) => t.updatedAt < startOfToday - 7 * 864e5)],
+  ];
+  return (
+    <div className="drawer-wrap" onClick={props.onClose}>
+      <aside className="drawer" onClick={(e) => (e.stopPropagation(), setSwiped(null))}>
+        <div className="drawer-head">
+          <strong>채팅</strong>
+          <button className="icon-btn" aria-label="닫기" onClick={props.onClose}>
+            <IconLeft />
+          </button>
+        </div>
+        <button className="new-chat" onClick={props.onNew}>
+          <IconCompose /> 새 채팅
+        </button>
+        <div className="drawer-list">
+          {sorted.length === 0 && <p className="muted small">아직 지난 채팅이 없어요.</p>}
+          {groups.map(([label, list]) =>
+            list.length ? (
+              <div key={label}>
+                <p className="drawer-label">{label}</p>
+                <ul className="threads-list">
+                  {list.map((t) => (
+                    <SwipeRow
+                      key={t.id}
+                      open={swiped === t.id}
+                      onOpenChange={(o) => setSwiped(o ? t.id : null)}
+                      onTap={() => props.onPick(t.id)}
+                      actions={[{ label: "삭제", cls: "danger", run: () => props.onDelete(t.id) }]}
+                    >
+                      <span className={`grow ${t.id === props.activeId ? "on" : ""}`}>{t.title}</span>
+                    </SwipeRow>
+                  ))}
+                </ul>
+              </div>
+            ) : null,
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }
 
@@ -657,6 +817,33 @@ function ItemRow(props: {
   );
 }
 
+/* ---------------- 대화창: 맨 아래에 붙어 있기 ---------------- */
+
+// 대화 목록(.thread)만 스크롤된다. 새 메시지가 오거나 키보드가 올라와 높이가 줄면
+// 원래 맨 아래를 보고 있었을 때만 다시 맨 아래로 붙인다.
+function useStickToBottom(endRef: React.RefObject<HTMLDivElement | null>, deps: unknown[]) {
+  const atBottom = useRef(true);
+  useEffect(() => {
+    const box = endRef.current?.parentElement;
+    if (!box) return;
+    const toEnd = () => (box.scrollTop = box.scrollHeight);
+    const onScroll = () => (atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 60);
+    const ro = new ResizeObserver(() => atBottom.current && toEnd());
+    ro.observe(box);
+    box.addEventListener("scroll", onScroll, { passive: true });
+    toEnd();
+    return () => {
+      ro.disconnect();
+      box.removeEventListener("scroll", onScroll);
+    };
+  }, [endRef]);
+  useEffect(() => {
+    const box = endRef.current?.parentElement;
+    if (box && atBottom.current) box.scrollTop = box.scrollHeight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 /* ---------------- 아래로 당겨서 새로고침 ---------------- */
 
 // 화면 맨 위에서 아래로 끌어내리면 숨어 있던 새로고침 버튼이 따라 내려오고,
@@ -676,7 +863,8 @@ function PullToRefresh() {
     };
     const onStart = (e: TouchEvent) => {
       const t = e.target as HTMLElement;
-      if (window.scrollY > 0 || t.closest("textarea, input, select, .popover")) return (startY = null);
+      const box = t.closest(".thread, .drawer-list");
+      if (window.scrollY > 0 || (box && box.scrollTop > 0) || t.closest("textarea, input, select, .popover, .composer")) return (startY = null);
       startY = e.touches[0].clientY;
       startX = e.touches[0].clientX;
       vertical = null;
@@ -1091,7 +1279,7 @@ function ChatView(props: {
   const setChat = (it: Item, fn: (c: Msg[]) => Msg[]): Item =>
     subId ? { ...it, subtasks: it.subtasks.map((s) => (s.id === subId ? { ...s, chat: fn(s.chat ?? []) } : s)) } : { ...it, chat: fn(it.chat) };
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [chat.length, streaming]);
+  useStickToBottom(endRef, [chat.length, streaming]);
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
