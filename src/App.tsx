@@ -72,16 +72,38 @@ export default function App() {
       const r = el.getBoundingClientRect();
       if (r.top < 0 || r.bottom > vv.height) el.scrollIntoView({ block: "center" });
     };
+    // 대화 화면에서는 문서가 밀려 올라가지 않게 맨 위로 되돌린다.
+    const pinTop = () => {
+      if (document.documentElement.classList.contains("chat-lock") && window.scrollY !== 0) window.scrollTo(0, 0);
+    };
     const onResize = () => {
+      pinTop();
       apply();
       setTimeout(keepFocusVisible, 50);
     };
+    // 아이폰은 키보드가 다 올라온 뒤에 크기 알림이 늦게 오거나 빠지기도 해서, 입력칸을 누르고 닫을 때 몇 번 더 맞춘다.
+    const settle = () => [0, 120, 300, 600].forEach((ms) => setTimeout(() => { pinTop(); apply(); }, ms));
+    // 고정된 대화 화면에서 스크롤 영역 밖을 끌면 아이폰이 화면 전체를 끌어 버리므로 막는다.
+    const onTouchMove = (e: TouchEvent) => {
+      if (!document.documentElement.classList.contains("chat-lock")) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".thread, .drawer-list, textarea")) return;
+      if (e.cancelable) e.preventDefault();
+    };
+    document.addEventListener("focusin", settle);
+    document.addEventListener("focusout", settle);
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("scroll", pinTop);
     apply();
     vv.addEventListener("resize", onResize);
     vv.addEventListener("scroll", apply);
     return () => {
       vv.removeEventListener("resize", onResize);
       vv.removeEventListener("scroll", apply);
+      document.removeEventListener("focusin", settle);
+      document.removeEventListener("focusout", settle);
+      document.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("scroll", pinTop);
     };
   }, []);
 
@@ -308,6 +330,13 @@ export default function App() {
 
   const open = (id: string) => id && setView({ name: "item", id });
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
+
+  // 대화 화면이 떠 있는 동안에는 뒤쪽 문서가 스크롤되지 않게 잠근다.
+  const chatScreen = view.name === "home" || view.name === "chat";
+  useEffect(() => {
+    document.documentElement.classList.toggle("chat-lock", chatScreen);
+    if (chatScreen) window.scrollTo(0, 0);
+  }, [chatScreen]);
 
   return (
     <div className={`app ${view.name === "chat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>

@@ -415,3 +415,7 @@ html, body { overscroll-behavior-y: none; }
 .homechat .composer, .chatview .composer { position: relative; bottom: auto; flex: 0 0 auto; margin: 0; }
 .home-head { position: relative; flex: 0 0 auto; margin: 0 -8px; }
 .chat-head { position: relative; flex: 0 0 auto; margin: 0 -20px; }
+
+/* 대화 화면이 떠 있을 때는 뒤쪽 문서를 화면 높이로 고정해 아이폰이 밀어 올리지 못하게 한다 */
+html.chat-lock, html.chat-lock body { height: 100%; overflow: hidden; }
+html.chat-lock .app { min-height: 0; }
