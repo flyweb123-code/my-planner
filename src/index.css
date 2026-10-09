@@ -419,5 +419,6 @@ html, body { overscroll-behavior-y: none; }
 /* 대화 화면이 떠 있을 때는 뒤쪽 문서를 화면 높이로 고정해 아이폰이 밀어 올리지 못하게 한다 */
 html.chat-lock, html.chat-lock body { height: 100%; overflow: hidden; }
 html.chat-lock .app { min-height: 0; }
-/* 아이폰은 키보드 위 ∧ ∨ ✓ 막대가 화면 아래를 덮으므로 그만큼 띄운다 */
-html.ios .app.kb-open .homechat, html.ios .app.kb-open .chatview { padding-bottom: 64px; }
+
+
+.probe { position: fixed; top: calc(env(safe-area-inset-top) + 50px); left: 8px; right: 8px; z-index: 99; margin: 0; padding: 8px 10px; background: rgba(0,0,0,.78); color: #fff; font: 13px/1.5 ui-monospace, monospace; border-radius: 10px; pointer-events: none; white-space: pre-wrap; }

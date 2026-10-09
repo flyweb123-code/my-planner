@@ -10,11 +10,6 @@ import { toast } from "./toast";
 import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
-// 아이폰(iOS 26)은 키보드 위의 ∧ ∨ ✓ 막대가 화면 위에 떠서 보이는 영역 아래쪽을 덮는다.
-const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const KB_BAR = 64;
-if (IOS) document.documentElement.classList.add("ios");
-
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
 
 export default function App() {
@@ -75,7 +70,7 @@ export default function App() {
       const el = document.activeElement as HTMLElement | null;
       if (!el || !el.matches("input, textarea") || el.closest(".homechat, .chatview")) return;
       const r = el.getBoundingClientRect();
-      if (r.top < 0 || r.bottom > vv.height - (IOS ? KB_BAR : 0)) el.scrollIntoView({ block: "center" });
+      if (r.top < 0 || r.bottom > vv.height) el.scrollIntoView({ block: "center" });
     };
     // 대화 화면에서는 문서가 밀려 올라가지 않게 맨 위로 되돌린다.
     const pinTop = () => {
@@ -402,6 +397,7 @@ export default function App() {
         )}
       </main>
       <PullToRefresh />
+      <ViewportProbe />
       {drawer && (
         <ChatDrawer
           threads={threads}
@@ -609,7 +605,7 @@ function HomeChat(props: {
         <button className="icon-btn" aria-label="채팅 목록" onClick={props.onMenu}>
           <IconMenu />
         </button>
-        <strong>클론</strong>
+        <strong onClick={tapTitle}>클론</strong>
         <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
           <IconCompose />
         </button>
@@ -895,6 +891,47 @@ function useStickToBottom(endRef: React.RefObject<HTMLDivElement | null>, deps: 
 
 // 화면 맨 위에서 아래로 끌어내리면 숨어 있던 새로고침 버튼이 따라 내려오고,
 // 충분히 당긴 뒤 놓으면 앱을 새로 불러온다 (새 버전과 최신 일정을 받는다).
+// 화면 크기 점검용: 홈 제목 '클론'을 빠르게 세 번 누르면 숫자가 뜨고, 다시 세 번 누르면 사라진다.
+let titleTaps: number[] = [];
+function tapTitle() {
+  const now = Date.now();
+  titleTaps = [...titleTaps.filter((t) => now - t < 800), now];
+  if (titleTaps.length >= 3) {
+    titleTaps = [];
+    window.dispatchEvent(new Event("toggle-probe"));
+  }
+}
+
+function ViewportProbe() {
+  const [on, setOn] = useState(false);
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const t = () => setOn((v) => !v);
+    window.addEventListener("toggle-probe", t);
+    return () => window.removeEventListener("toggle-probe", t);
+  }, []);
+  useEffect(() => {
+    if (!on) return;
+    const read = () => {
+      const vv = window.visualViewport;
+      const c = document.querySelector(".composer")?.getBoundingClientRect();
+      const box = document.querySelector(".homechat, .chatview")?.getBoundingClientRect();
+      const r = (n?: number) => (n === undefined ? "-" : Math.round(n));
+      setText(
+        `vv ${r(vv?.height)} top ${r(vv?.offsetTop)} pt ${r(vv?.pageTop)}\n` +
+          `inner ${window.innerHeight} client ${document.documentElement.clientHeight} screen ${screen.height}\n` +
+          `scrollY ${r(window.scrollY)} box ${r(box?.top)}~${r(box?.bottom)}\n` +
+          `composer ${r(c?.top)}~${r(c?.bottom)} kb ${document.querySelector(".app")?.classList.contains("kb-open") ? "y" : "n"}`,
+      );
+    };
+    read();
+    const id = setInterval(read, 250);
+    return () => clearInterval(id);
+  }, [on]);
+  if (!on) return null;
+  return <pre className="probe">{text}</pre>;
+}
+
 function PullToRefresh() {
   const [pull, setPull] = useState(0);
   const [spinning, setSpinning] = useState(false);
