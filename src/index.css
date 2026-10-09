@@ -384,7 +384,6 @@ html, body { overscroll-behavior-y: none; }
 
 /* 입력 중(키보드가 올라온 상태)에는 탭 바를 숨기고 입력창을 맨 아래로 */
 .app.kb-open .tabs { display: none; }
-.app.kb-open .composer { bottom: calc(8px + env(safe-area-inset-bottom)); }
 
 /* ---------- 홈 머리줄과 왼쪽 채팅 목록 ---------- */
 .home-head { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; margin: 0 -12px; padding: calc(6px + env(safe-area-inset-top)) 4px 6px; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
