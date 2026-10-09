@@ -97,6 +97,36 @@ export default function App() {
       if (t?.closest(".thread, .drawer-list, textarea")) return;
       if (e.cancelable) e.preventDefault();
     };
+    // 아이폰은 키보드에 가려질 입력칸을 누르면 화면 전체를 끌어올리는 움직임을 넣는데,
+    // 대화 화면은 이미 키보드 위로 줄어들기 때문에 그 움직임이 '내려갔다 올라가는' 출렁임으로 보인다.
+    // 그래서 입력칸을 누르는 순간 잠깐 화면 위쪽으로 옮겨서 포커스를 주고, 키보드가 뜨면 제자리로 돌린다.
+    let lifted: HTMLElement | null = null;
+    let liftTimer = 0;
+    const drop = () => {
+      if (!lifted) return;
+      lifted.style.transform = "";
+      lifted.style.opacity = "";
+      lifted = null;
+      clearTimeout(liftTimer);
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!(el instanceof HTMLTextAreaElement) || el.disabled || document.activeElement === el) return;
+      if (!el.closest(".homechat .composer, .chatview .composer")) return;
+      const r = el.getBoundingClientRect();
+      if (r.top < vv.height * 0.4) return;
+      e.preventDefault();
+      lifted = el;
+      el.style.transform = `translateY(${Math.round(80 - r.top)}px)`;
+      el.style.opacity = "0";
+      el.focus({ preventScroll: true });
+      const end = el.value.length;
+      el.setSelectionRange(end, end);
+      liftTimer = window.setTimeout(drop, 700);
+    };
+    document.addEventListener("touchend", onTouchEnd, { passive: false, capture: true });
+    const onLiftResize = () => lifted && requestAnimationFrame(drop);
+    vv.addEventListener("resize", onLiftResize);
     document.addEventListener("focusin", settle);
     document.addEventListener("focusout", settle);
     document.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -107,6 +137,9 @@ export default function App() {
     return () => {
       vv.removeEventListener("resize", onResize);
       vv.removeEventListener("scroll", apply);
+      document.removeEventListener("touchend", onTouchEnd, { capture: true });
+      vv.removeEventListener("resize", onLiftResize);
+      drop();
       document.removeEventListener("focusin", settle);
       document.removeEventListener("focusout", settle);
       document.removeEventListener("touchmove", onTouchMove);
