@@ -409,7 +409,7 @@ html, body { overscroll-behavior-y: none; }
 .homechat, .chatview { position: fixed; left: 0; right: 0; top: var(--vvtop, 0px); height: var(--vvh, 100dvh); min-height: 0; max-width: 640px; margin: 0 auto; padding: 0 20px; display: flex; flex-direction: column; }
 .homechat { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
 .chatview { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
-.app.kb-open .homechat, .app.kb-open .chatview { padding-bottom: 8px; }
+html.kb-up .homechat, html.kb-up .chatview { padding-bottom: 8px; }
 .homechat .thread, .chatview .thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 -20px; padding: 12px 20px 16px; }
 .homechat .composer, .chatview .composer { position: relative; bottom: auto; flex: 0 0 auto; margin: 0; }
 .home-head { position: relative; flex: 0 0 auto; margin: 0 -8px; }

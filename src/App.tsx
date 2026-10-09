@@ -61,7 +61,14 @@ export default function App() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    // 키보드가 실제로 올라왔는지는 보이는 높이로 판단하고, 높이와 같은 순간에 입력창 아래 여백을 줄인다.
+    // (포커스만 보고 여백을 먼저 줄이면 키보드가 올라오기 전에 입력창이 한 번 내려갔다가 다시 올라간다.)
+    let full = vv.height;
+    let lastW = vv.width;
     const apply = () => {
+      if (vv.width !== lastW) { lastW = vv.width; full = vv.height; }
+      full = Math.max(full, vv.height);
+      document.documentElement.classList.toggle("kb-up", full - vv.height > 120);
       document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
       document.documentElement.style.setProperty("--vvtop", `${vv.offsetTop}px`);
     };
