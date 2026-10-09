@@ -10,6 +10,11 @@ import { toast } from "./toast";
 import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
+// 아이폰(iOS 26)은 키보드 위의 ∧ ∨ ✓ 막대가 화면 위에 떠서 보이는 영역 아래쪽을 덮는다.
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const KB_BAR = 64;
+if (IOS) document.documentElement.classList.add("ios");
+
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
 
 export default function App() {
@@ -70,7 +75,7 @@ export default function App() {
       const el = document.activeElement as HTMLElement | null;
       if (!el || !el.matches("input, textarea") || el.closest(".homechat, .chatview")) return;
       const r = el.getBoundingClientRect();
-      if (r.top < 0 || r.bottom > vv.height) el.scrollIntoView({ block: "center" });
+      if (r.top < 0 || r.bottom > vv.height - (IOS ? KB_BAR : 0)) el.scrollIntoView({ block: "center" });
     };
     // 대화 화면에서는 문서가 밀려 올라가지 않게 맨 위로 되돌린다.
     const pinTop = () => {
@@ -115,11 +120,24 @@ export default function App() {
       el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !["checkbox", "radio", "button", "file", "date", "time"].includes(el.type));
     const onIn = (e: FocusEvent) => isField(e.target) && setTyping(true);
     const onOut = () => setTimeout(() => setTyping(isField(document.activeElement)), 0);
+    // 포커스 알림이 빠지는 경우가 있어서, 보이는 높이가 확 줄어든 것도 키보드가 올라온 것으로 본다.
+    const vv = window.visualViewport;
+    let full = vv?.height ?? 0;
+    let lastW = vv?.width ?? 0;
+    const onVV = () => {
+      if (!vv) return;
+      if (vv.width !== lastW) { lastW = vv.width; full = vv.height; }
+      full = Math.max(full, vv.height);
+      if (full - vv.height > 120) setTyping(true);
+      else if (!isField(document.activeElement)) setTyping(false);
+    };
     document.addEventListener("focusin", onIn);
     document.addEventListener("focusout", onOut);
+    vv?.addEventListener("resize", onVV);
     return () => {
       document.removeEventListener("focusin", onIn);
       document.removeEventListener("focusout", onOut);
+      vv?.removeEventListener("resize", onVV);
     };
   }, []);
   const [, bump] = useState(0);
