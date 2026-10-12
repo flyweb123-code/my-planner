@@ -297,7 +297,18 @@ export async function updateForItem(token: string, eventId: string, it: ItemLike
   const b = body(it);
   const start = "date" in b.start ? { date: b.start.date, dateTime: null } : { ...b.start, date: null };
   const end = "date" in b.end ? { date: b.end.date, dateTime: null } : { ...b.end, date: null };
-  await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ ...b, start, end }) });
+  // 설명은 처음 만들 때만 넣는다. 캘린더에서 가져온 일정이면 원래 설명(메모)을 지우지 않도록.
+  const patch: Partial<typeof b> = { ...b };
+  delete patch.description;
+  await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ ...patch, start, end }) });
+}
+
+// 캘린더에 원래 있던 일정을 할 일로 가져올 때: 새 일정을 만들지 않고 그 일정에 할 일 표시만 붙인다.
+export async function linkEvent(token: string, eventId: string, itemId: string) {
+  await api(token, `/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ extendedProperties: { private: { plannerItemId: itemId } } }),
+  });
 }
 
 export async function deleteEvent(token: string, eventId: string) {

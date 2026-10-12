@@ -70,10 +70,25 @@ const suggestTool = {
 // Claude 앱처럼 답을 실시간으로 받아 보여 준다. 세부 업무 제안은 도구 호출로 따로 받는다.
 export type World = { items: Item[]; events: CalEvent[]; home: Msg[] };
 
-const eventsText = (events: CalEvent[]) =>
-  events.length
-    ? events.slice(0, 60).map((e) => `- ${e.date} ${e.time ? e.time + (e.endTime ? "~" + e.endTime : "") : "종일"}: ${e.title}`).join("\n")
-    : "(연결 안 됨 또는 일정 없음)";
+// 캘린더 일정은 제목뿐 아니라 기간, 장소, 설명(메모)까지 읽게 한다. 마감·준비물 같은 내용이 설명에 들어 있는 경우가 많다.
+const eventsText = (events: CalEvent[], max = 80) => {
+  if (!events.length) return "(연결 안 됨 또는 일정 없음)";
+  const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + "…" : t).replace(/\s+/g, " ").trim();
+  return events
+    .slice(0, max)
+    .map((e) => {
+      const when = e.time
+        ? `${e.date} ${e.time}${e.endTime ? "~" + (e.endDate !== e.date ? e.endDate + " " : "") + e.endTime : ""}`
+        : `${e.date}${e.endDate && e.endDate !== e.date ? "~" + e.endDate : ""} 종일`;
+      const extra = [
+        e.itemId ? "(할 일 목록에도 있음)" : "",
+        e.location ? `장소: ${clip(e.location, 80)}` : "",
+        e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
+      ].filter(Boolean);
+      return `- ${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}`;
+    })
+    .join("\n");
+};
 
 // 할 일 하나에서 대화할 때도 사용자의 전체 일정을 함께 보도록 넘기는 내용
 function worldText(w: World, exceptId: string) {
@@ -315,9 +330,7 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
   const open = items.filter((i) => !i.done);
   const itemsText =
     open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
-  const evText = events.length
-    ? events.slice(0, 40).map((e) => `- ${e.date} ${e.time || "종일"}: ${e.title}`).join("\n")
-    : "(연결 안 됨 또는 일정 없음)";
+  const evText = eventsText(events, 60);
   const res = await client(s).messages.parse({
     model: s.model,
     max_tokens: 16000,
@@ -325,7 +338,10 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
     system:
       "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 짧은 제안을 만든다. " +
       "지금 시각을 꼭 고려한다(새벽이면 쉬라고 하거나 아침에 할 일을 알려 주는 식). 각 문장은 짧고 친근한 한국어로. " +
-      "할 일이 하나도 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
+      "할 일 목록뿐 아니라 구글 캘린더 일정도 함께 보고 추천한다. 캘린더 일정의 설명에 적힌 마감, 준비할 것도 읽고, " +
+      "곧 다가오는 일정(마감, 약속, 제출일)은 미리 준비할 것을 '확인할 것'이나 '지금'에 넣는다. 오늘 있는 일정은 시간에 맞춰 알려 준다. " +
+      "캘린더 일정에서 나온 제안은 item_id를 빈 문자열로 두되, '(할 일 목록에도 있음)' 표시가 있으면 할 일 쪽 항목으로 다룬다. " +
+      "할 일과 캘린더 일정이 모두 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
     messages: [{ role: "user", content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}` }],
   });
   if (!res.parsed_output) throw new Error("제안을 만들지 못했어요.");
@@ -333,21 +349,27 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
 }
 
 // API 키가 없거나 실패했을 때 쓰는 간단한 규칙 기반 제안
-export function simpleBriefing(items: Item[]): Briefing {
+export function simpleBriefing(items: Item[], events: CalEvent[] = []): Briefing {
   const open = items.filter((i) => !i.done);
   const today = new Date().toLocaleDateString("sv-SE");
+  const soon = new Date(Date.now() + 7 * 86400000).toLocaleDateString("sv-SE");
+  // 할 일과 이어지지 않은 캘린더 일정 중 오늘~일주일 안의 것
+  const calSoon = events
+    .filter((e) => !e.itemId && e.date >= today && e.date <= soon)
+    .map((e) => ({ text: `${e.date === today ? "오늘" : e.date.slice(5).replace("-", "/")} ${e.time || ""} '${e.title}' 일정이 있어요.`.replace(/\s+/g, " "), item_id: "" }));
   const byDue = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
   const first = byDue[0];
   const week = Date.now() - 7 * 86400000;
   return {
     now: first
       ? { text: `${first.title}${first.due ? ` (${first.due})` : ""}부터 해 보세요.`, item_id: first.id }
-      : { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "" },
+      : calSoon[0] ?? { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "" },
     missed: open
       .filter((i) => i.due && i.due < today)
       .slice(0, 3)
       .map((i) => ({ text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id })),
     check: [
+      ...(first ? calSoon : calSoon.slice(1)),
       ...open.filter((i) => i.updatedAt < week).map((i) => ({ text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
       ...open.filter((i) => !i.due).map((i) => ({ text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id })),
     ].slice(0, 3),

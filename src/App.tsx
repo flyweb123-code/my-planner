@@ -204,7 +204,7 @@ export default function App() {
   const loadEvents = useCallback(() => {
     if (!gToken) return setEvents([]);
     gcal
-      .upcoming(gToken)
+      .upcoming(gToken, 60)
       .then(setEvents)
       .catch(async (e) => {
         if (!gcal.savedToken() && gcal.hasSession() && (await refreshToken())) return;
@@ -248,7 +248,7 @@ export default function App() {
       }
       for (const it of items) {
         if (inFlight.current.has(it.id)) continue;
-        const want = it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}` : "";
+        const want = syncKey(it);
         if (want === (it.calSynced ?? "") && (!!it.calendarEventId === !!want)) continue;
         inFlight.current.add(it.id);
         try {
@@ -292,6 +292,39 @@ export default function App() {
       setItems((all) => all.map((it) => (it.id === id ? { ...fn(it), updatedAt: Date.now() } : it))),
     [setItems],
   );
+
+  // 캘린더에 원래 있던 일정을 할 일로 가져온다. 일정은 새로 만들지 않고 그 일정과 이어 둔다.
+  const addEventAsTodo = async (ev: CalEvent) => {
+    const existing = itemsRef.current.find((i) => i.calendarEventId === ev.id);
+    if (existing) return open(existing.id);
+    const it: Item = {
+      id: uid(),
+      title: ev.title,
+      note: [ev.location && `장소: ${ev.location}`, ev.description].filter(Boolean).join("\n"),
+      due: ev.date,
+      time: ev.time || undefined,
+      endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : undefined,
+      endTime: ev.time && ev.endTime ? ev.endTime : undefined,
+      done: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      subtasks: [],
+      chat: [],
+      calendarEventId: ev.id,
+    };
+    it.calSynced = syncKey(it);
+    commit([it, ...itemsRef.current]);
+    briefCache = null;
+    open(it.id);
+    toast("할 일에 추가했어요");
+    try {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (token) await gcal.linkEvent(token, ev.id, it.id);
+      loadEvents();
+    } catch {
+      /* 표시만 못 붙인 것이라 할 일은 그대로 둔다 */
+    }
+  };
 
   const runTool: ToolRunner = async (name, input) => {
     const all = itemsRef.current;
@@ -430,7 +463,7 @@ export default function App() {
           <ChatView key={view.sub ?? "item"} world={{ items, events, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
-          <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onGoSettings={() => setView({ name: "settings" })} />
+          <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onAddTodo={addEventAsTodo} onGoSettings={() => setView({ name: "settings" })} />
         )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
@@ -485,7 +518,7 @@ export default function App() {
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
 
-let briefCache: { at: number; brief: Briefing } | null = null;
+let briefCache: { at: number; brief: Briefing; evKey: string } | null = null;
 
 function HomeChat(props: {
   onMenu: () => void;
@@ -548,20 +581,21 @@ function HomeChat(props: {
   const [fresh] = useState(chat.length === 0);
   const [brief, setBrief] = useState<Briefing | null>(() => briefCache?.brief ?? null);
   const [briefLoading, setBriefLoading] = useState(false);
+  const evKey = events.map((e) => `${e.id}|${e.title}|${e.date}|${e.time}`).join(",");
   useEffect(() => {
-    if (!settings.apiKey) return setBrief(simpleBriefing(items));
-    if (briefCache && Date.now() - briefCache.at < 30 * 60000) return;
+    if (!settings.apiKey) return setBrief(simpleBriefing(items, events));
+    if (briefCache && briefCache.evKey === evKey && Date.now() - briefCache.at < 30 * 60000) return;
     setBriefLoading(true);
     makeBriefing(settings, items, events)
       .then((b) => {
-        briefCache = { at: Date.now(), brief: b };
+        briefCache = { at: Date.now(), brief: b, evKey };
         setBrief(b);
       })
-      .catch(() => setBrief(simpleBriefing(items)))
+      .catch(() => setBrief(simpleBriefing(items, events)))
       .finally(() => setBriefLoading(false));
-    // 처음 열 때와 캘린더 일정이 들어왔을 때만 다시 만든다.
+    // 처음 열 때와 캘린더 일정이 들어오거나 바뀌었을 때만 다시 만든다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.apiKey, events.length]);
+  }, [settings.apiKey, evKey]);
 
   const ask = (text: string) => send(`${text} 이거 어떻게 하면 좋을까?`);
 
@@ -1728,7 +1762,7 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
           <strong>{props.calOn ? "구글 캘린더에 연결돼 있어요" : props.linked ? "연결 시간이 끝났어요" : "연결 안 됨"}</strong>
           {props.calOn && (
             <span className="muted small">
-              {keep ? "계속 연결 유지 중" : "1시간 동안 연결"} · 앞으로 30일 일정 {props.eventsCount}개
+              {keep ? "계속 연결 유지 중" : "1시간 동안 연결"} · 앞으로 60일 일정 {props.eventsCount}개
             </span>
           )}
         </div>
@@ -1809,7 +1843,7 @@ function DataSettings() {
 type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent };
 
 /* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
-function EventEditor({ ev, onClose, onSaved }: { ev: CalEvent; onClose: () => void; onSaved: () => void }) {
+function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClose: () => void; onSaved: () => void; onAddTodo: () => void }) {
   const [d, setD] = useState<gcal.EventEdit>({
     title: ev.title,
     due: ev.date,
@@ -1848,6 +1882,9 @@ function EventEditor({ ev, onClose, onSaved }: { ev: CalEvent; onClose: () => vo
         </button>
       </header>
       <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
+      <button className="btn wide add-todo" disabled={busy} onClick={onAddTodo}>
+        할 일에 추가
+      </button>
       <div className="fields">
         <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
         <div className="field memo">
@@ -1871,6 +1908,8 @@ function EventEditor({ ev, onClose, onSaved }: { ev: CalEvent; onClose: () => vo
 }
 
 const ymd = (d: Date) => d.toLocaleDateString("sv-SE");
+// 할 일이 캘린더에 마지막으로 반영된 모양 (바뀌었는지 비교용)
+const syncKey = (it: Item) => (it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}` : "");
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
 
 function CalendarView(props: {
@@ -1880,6 +1919,7 @@ function CalendarView(props: {
   linked: boolean;
   onConnect: () => void;
   onOpen: (id: string) => void;
+  onAddTodo: (ev: CalEvent) => void;
   onGoSettings: () => void;
 }) {
   const today = ymd(new Date());
@@ -1968,6 +2008,7 @@ function CalendarView(props: {
       <EventEditor
         ev={editing}
         onClose={() => setEditing(null)}
+        onAddTodo={() => props.onAddTodo(editing)}
         onSaved={() => {
           setEditing(null);
           load();

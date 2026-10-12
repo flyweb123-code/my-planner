@@ -421,3 +421,4 @@ html.chat-lock .app { min-height: 0; }
 
 
 .probe { position: fixed; top: calc(env(safe-area-inset-top) + 50px); left: 8px; right: 8px; z-index: 99; margin: 0; padding: 8px 10px; background: rgba(0,0,0,.78); color: #fff; font: 13px/1.5 ui-monospace, monospace; border-radius: 10px; pointer-events: none; white-space: pre-wrap; }
+.event-edit .add-todo { margin: 4px 0 14px; }
