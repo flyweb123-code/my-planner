@@ -469,7 +469,7 @@ export default function App() {
           <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onAddTodo={addEventAsTodo} onGoSettings={() => setView({ name: "settings" })} />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
         )}
       </main>
       <PullToRefresh />
@@ -1620,6 +1620,7 @@ function SettingsView(props: {
   linked: boolean;
   eventsCount: number;
   pinnedCount: number;
+  items: Item[];
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
@@ -1678,7 +1679,7 @@ function SettingsView(props: {
       </header>
       {page === "claude" && <ClaudeSettings settings={settings} setSettings={props.setSettings} />}
       {page === "calendar" && <CalendarSettings {...props} />}
-      {page === "widget" && <WidgetSettings pinnedCount={props.pinnedCount} onGoCalendar={() => setPage("calendar")} />}
+      {page === "widget" && <WidgetSettings items={props.items} onGoCalendar={() => setPage("calendar")} />}
       {page === "data" && <DataSettings />}
     </section>
   );
@@ -1828,7 +1829,8 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
   );
 }
 
-function WidgetSettings({ pinnedCount, onGoCalendar }: { pinnedCount: number; onGoCalendar: () => void }) {
+function WidgetSettings({ items, onGoCalendar }: { items: Item[]; onGoCalendar: () => void }) {
+  const pinnedCount = items.filter((i) => i.pinned && !i.done).length;
   const server = gcal.serverUrl();
   const [kv, setKv] = useState<"" | "checking" | "ok" | "nokv" | "fail">("");
   const [copied, setCopied] = useState<"" | "ok" | "show">("");
@@ -1870,7 +1872,17 @@ function WidgetSettings({ pinnedCount, onGoCalendar }: { pinnedCount: number; on
             <span className="dot-big" />
             <div className="grow">
               <strong>
-                {kv === "checking" ? "서버 확인 중…" : kv === "nokv" ? "서버에 저장소(PINS)가 아직 없어요" : kv === "fail" ? "서버에 접속이 안 돼요" : st.state === "fail" ? "목록을 올리지 못했어요" : "위젯에 보낼 준비가 됐어요"}
+                {kv === "checking"
+                  ? "서버 확인 중…"
+                  : kv === "nokv"
+                    ? "서버 코드가 예전 버전이거나 저장소(PINS)가 연결되지 않았어요"
+                    : kv === "fail"
+                      ? "서버에 접속이 안 돼요"
+                      : st.state === "fail"
+                        ? `목록을 올리지 못했어요 (${st.code === 0 ? "접속 실패" : `오류 ${st.code}`})`
+                        : st.state === "ok"
+                          ? "고정 목록을 서버에 올렸어요"
+                          : "위젯에 보낼 준비가 됐어요"}
               </strong>
               {st.at && <span className="muted small">마지막으로 올린 시각 {new Date(st.at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" })}</span>}
             </div>
@@ -1882,6 +1894,7 @@ function WidgetSettings({ pinnedCount, onGoCalendar }: { pinnedCount: number; on
             <li>아래 버튼으로 위젯 코드를 복사하고, Scriptable에서 + 를 눌러 붙여 넣은 뒤 이름을 "클론"으로 저장해요.</li>
             <li>잠금 화면을 길게 눌러 <b>사용자화 → 잠금 화면 → 위젯 추가 → Scriptable</b>을 고르고, 위젯을 눌러 Script를 "클론"으로 골라요.</li>
           </ol>
+          <button className="secondary" onClick={() => widget.resendPins(items)}>고정 목록 지금 다시 보내기</button>
           <button onClick={copy}>위젯 코드 복사</button>
           {copied === "ok" && <p className="check ok">복사했어요. Scriptable에 붙여 넣어 주세요.</p>}
           {copied === "show" && <textarea className="code" readOnly value={widget.scriptableCode()} onFocus={(e) => e.currentTarget.select()} />}

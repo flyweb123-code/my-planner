@@ -23,11 +23,17 @@ export function pinnedPayload(items: Item[]) {
   return items.filter((i) => i.pinned && !i.done).map((i) => ({ t: i.title, d: i.due ? dueLabel(i.due) : "" }));
 }
 
-export type SyncState = { state: "off" | "ok" | "fail"; at?: number };
+export type SyncState = { state: "off" | "ok" | "fail"; at?: number; code?: number };
 let last = "";
 let timer = 0;
 let status: SyncState = { state: "off" };
 export const syncStatus = () => status;
+
+// 설정 화면의 '지금 다시 보내기'
+export function resendPins(items: Item[]) {
+  last = "";
+  syncPins(items);
+}
 
 // 목록이 바뀌면 잠깐 기다렸다가 서버에 올린다. 같은 내용이면 다시 올리지 않는다.
 export function syncPins(items: Item[]) {
@@ -38,11 +44,14 @@ export function syncPins(items: Item[]) {
   timer = window.setTimeout(async () => {
     try {
       const r = await fetch(pinsUrl(), { method: "PUT", headers: { "Content-Type": "application/json" }, body });
-      if (!r.ok) throw new Error(String(r.status));
-      last = body;
-      status = { state: "ok", at: Date.now() };
+      if (!r.ok) {
+        status = { state: "fail", at: Date.now(), code: r.status };
+      } else {
+        last = body;
+        status = { state: "ok", at: Date.now() };
+      }
     } catch {
-      status = { state: "fail", at: Date.now() };
+      status = { state: "fail", at: Date.now(), code: 0 };
     }
     window.dispatchEvent(new Event("pins-synced"));
   }, 800);
