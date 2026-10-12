@@ -91,14 +91,20 @@ if (fam === "accessoryInline") {
   l.font = Font.systemFont(10);
   l.centerAlignText();
 } else if (fam.startsWith("accessory")) {
+  // 잠금 화면 칸은 크기가 정해져 있어서, 개수가 적을수록 한 할 일에 줄을 더 준다.
   if (!items.length) w.addText("고정한 할 일 없음").font = Font.systemFont(13);
-  const max = items.length > 3 ? 2 : 3;
-  for (const it of items.slice(0, max)) {
-    const t = w.addText("• " + it.t + (it.d ? "  " + it.d : ""));
-    t.font = Font.semiboldSystemFont(13);
-    t.lineLimit = 1;
+  const shown = items.length > 3 ? items.slice(0, 2) : items;
+  const lines = shown.length === 1 ? 4 : shown.length === 2 ? 2 : 1;
+  for (const it of shown) {
+    const t = w.addText((it.d ? it.d + " · " : "") + it.t);
+    t.font = Font.semiboldSystemFont(shown.length === 1 ? 14 : 13);
+    t.lineLimit = lines;
+    t.minimumScaleFactor = 0.75;
   }
-  if (items.length > 3) w.addText("외 " + (items.length - 2) + "개 더").font = Font.systemFont(12);
+  if (items.length > 3) {
+    const more = w.addText("외 " + (items.length - 2) + "개 더");
+    more.font = Font.systemFont(12);
+  }
 } else {
   w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
   const h = w.addText("고정한 할 일");
@@ -110,7 +116,7 @@ if (fam === "accessoryInline") {
   for (const it of items.slice(0, max)) {
     const t = w.addText("• " + it.t + (it.d ? "  " + it.d : ""));
     t.font = Font.systemFont(13);
-    t.lineLimit = 1;
+    t.lineLimit = 2;
   }
   w.addSpacer();
 }
