@@ -422,3 +422,10 @@ html.chat-lock .app { min-height: 0; }
 
 .probe { position: fixed; top: calc(env(safe-area-inset-top) + 50px); left: 8px; right: 8px; z-index: 99; margin: 0; padding: 8px 10px; background: rgba(0,0,0,.78); color: #fff; font: 13px/1.5 ui-monospace, monospace; border-radius: 10px; pointer-events: none; white-space: pre-wrap; }
 .event-edit .add-todo { margin: 4px 0 14px; }
+
+/* ---------- 잠금 화면 고정 ---------- */
+.pin-btn { flex: 0 0 auto; width: 34px; height: 34px; padding: 0; margin: -6px -8px -6px -4px; display: grid; place-items: center; background: none; color: var(--faint); border-radius: 50%; }
+.pin-btn svg { width: 19px; height: 19px; }
+.pin-btn.on { color: var(--accent); }
+.steps { margin: 4px 0 14px; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; }
+.panel textarea.code { min-height: 160px; font: 12px/1.45 ui-monospace, monospace; margin-top: 10px; }

@@ -7,6 +7,7 @@
 // Cloudflare 대시보드의 Worker 설정에서 넣어야 하는 값
 //   GOOGLE_CLIENT_SECRET (비밀): 구글 클라우드 콘솔의 OAuth 클라이언트 보안 비밀번호
 //   ENC_KEY (비밀): 아무 긴 임의 문자열 (열쇠를 암호화하는 데 씀)
+//   PINS (KV 연결, 선택): 잠금 화면 위젯에 띄울 '고정한 할 일'을 보관하는 저장소
 
 const GOOGLE_CLIENT_ID = "544290783646-1p87mf5v6gba2ebemh363tmn9j6p9v2k.apps.googleusercontent.com";
 const ALLOWED_ORIGINS = ["https://flyweb123-code.github.io", "http://localhost:5173", "http://localhost:4173"];
@@ -16,7 +17,7 @@ export default {
     const origin = req.headers.get("Origin") || "";
     const cors = {
       "Access-Control-Allow-Origin": ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
       "Access-Control-Max-Age": "86400",
       Vary: "Origin",
@@ -25,7 +26,33 @@ export default {
 
     if (req.method === "OPTIONS") return new Response(null, { headers: cors });
     const path = new URL(req.url).pathname;
-    if (req.method === "GET" && path === "/") return json({ ok: true, ready: !!(env.GOOGLE_CLIENT_SECRET && env.ENC_KEY) });
+    if (req.method === "GET" && path === "/") return json({ ok: true, ready: !!(env.GOOGLE_CLIENT_SECRET && env.ENC_KEY), pins: !!env.PINS });
+
+    // 잠금 화면 위젯용 고정 목록. 주소 끝의 긴 임의 문자열이 곧 열쇠다.
+    const pin = path.match(/^\/pins\/([A-Za-z0-9_-]{20,64})$/);
+    if (pin) {
+      if (!env.PINS) return json({ error: "no_kv" }, 501);
+      if (req.method === "GET") {
+        const v = await env.PINS.get(pin[1]);
+        return new Response(v || '{"items":[]}', { headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" } });
+      }
+      if (req.method === "PUT") {
+        if (!ALLOWED_ORIGINS.includes(origin)) return json({ error: "origin_not_allowed" }, 403);
+        const text = await req.text();
+        if (text.length > 20000) return json({ error: "too_large" }, 413);
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return json({ error: "bad_request" }, 400);
+        }
+        const items = (Array.isArray(data.items) ? data.items : []).slice(0, 30).map((i) => ({ t: String(i.t || "").slice(0, 120), d: String(i.d || "").slice(0, 20) }));
+        await env.PINS.put(pin[1], JSON.stringify({ items, at: Date.now() }));
+        return json({ ok: true });
+      }
+      return json({ error: "not_found" }, 404);
+    }
+
     if (req.method !== "POST") return json({ error: "not_found" }, 404);
     if (!ALLOWED_ORIGINS.includes(origin)) return json({ error: "origin_not_allowed" }, 403);
     if (!env.GOOGLE_CLIENT_SECRET || !env.ENC_KEY) return json({ error: "server_not_configured" }, 500);

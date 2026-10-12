@@ -24,6 +24,7 @@ export type Item = {
   endTime?: string; // 끝나는 시각 (없으면 시작 1시간 뒤)
   calendarEventId?: string;
   calSynced?: string; // 마지막으로 캘린더에 반영한 제목/날짜/시간
+  pinned?: boolean; // 아이폰 잠금 화면 위젯에 띄울 할 일
 };
 // 홈(비서) 대화 하나. Claude 앱처럼 여러 개를 두고 왼쪽 목록에서 고른다.
 export type HomeThread = { id: string; title: string; createdAt: number; updatedAt: number; msgs: Msg[] };

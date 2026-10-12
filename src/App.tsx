@@ -5,15 +5,18 @@ import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing,
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
+import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
+  // 고정한 할 일을 잠금 화면 위젯용 저장소에 올린다.
+  useEffect(() => widget.syncPins(items), [items]);
   const [settings, setSettings] = usePersisted<Settings>("settings", DEFAULT_SETTINGS);
   // 홈 대화: 여러 채팅으로 나눠 저장한다. 앱을 열면 항상 새 채팅으로 시작한다.
   const [threads, setThreads] = usePersisted<HomeThread[]>("homeChats", []);
@@ -466,7 +469,7 @@ export default function App() {
           <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onAddTodo={addEventAsTodo} onGoSettings={() => setView({ name: "settings" })} />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
         )}
       </main>
       <PullToRefresh />
@@ -824,6 +827,11 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
     toast("할 일을 삭제했어요");
   };
   const toggleDone = (id: string) => setItems((a) => a.map((x) => (x.id === id ? { ...x, done: !x.done, updatedAt: Date.now() } : x)));
+  const togglePin = (id: string) => {
+    const it = items.find((x) => x.id === id);
+    setItems((a) => a.map((x) => (x.id === id ? { ...x, pinned: !x.pinned } : x)));
+    if (it && !it.pinned) toast(gcal.serverUrl() ? "잠금 화면에 고정했어요" : "고정했어요. 위젯은 설정에서 연결해요");
+  };
   const row = (i: Item) => (
     <ItemRow
       key={i.id}
@@ -832,6 +840,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
       onOpenChange={(o) => setSwiped(o ? i.id : null)}
       onOpen={onOpen}
       onToggle={() => toggleDone(i.id)}
+      onPin={() => togglePin(i.id)}
       onDelete={() => remove(i.id)}
     />
   );
@@ -897,6 +906,7 @@ function ItemRow(props: {
   onOpenChange: (o: boolean) => void;
   onOpen: (id: string) => void;
   onToggle: () => void;
+  onPin: () => void;
   onDelete: () => void;
 }) {
   const { it } = props;
@@ -930,6 +940,18 @@ function ItemRow(props: {
         )}
       </div>
       {it.due && <span className={`due ${n !== null && n <= 1 && !it.done ? "soon" : ""}`}>{dueLabel(it.due)}</span>}
+      {!it.done && (
+        <button
+          className={`pin-btn ${it.pinned ? "on" : ""}`}
+          aria-label={it.pinned ? "잠금 화면 고정 해제" : "잠금 화면에 고정"}
+          aria-pressed={!!it.pinned}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          onClick={(e) => (e.stopPropagation(), props.onPin())}
+        >
+          <IconPin on={it.pinned} />
+        </button>
+      )}
     </SwipeRow>
   );
 }
@@ -1589,7 +1611,7 @@ function ChatView(props: {
 
 /* ---------------- 설정 ---------------- */
 
-type SettingsPage = "main" | "claude" | "calendar" | "data";
+type SettingsPage = "main" | "claude" | "calendar" | "widget" | "data";
 
 function SettingsView(props: {
   settings: Settings;
@@ -1597,6 +1619,7 @@ function SettingsView(props: {
   calOn: boolean;
   linked: boolean;
   eventsCount: number;
+  pinnedCount: number;
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
@@ -1625,6 +1648,13 @@ function SettingsView(props: {
             </span>
             <span className="chev"><IconRight /></span>
           </li>
+          <li onClick={() => setPage("widget")}>
+            <span className="grow">
+              <strong>잠금 화면 위젯</strong>
+              <span className="status">고정한 할 일 {props.pinnedCount}개</span>
+            </span>
+            <span className="chev"><IconRight /></span>
+          </li>
           <li onClick={() => setPage("data")}>
             <span className="grow">
               <strong>데이터 백업</strong>
@@ -1636,7 +1666,7 @@ function SettingsView(props: {
       </section>
     );
 
-  const titles = { claude: "클론 연결", calendar: "구글 캘린더", data: "데이터 백업" };
+  const titles = { claude: "클론 연결", calendar: "구글 캘린더", widget: "잠금 화면 위젯", data: "데이터 백업" };
   return (
     <section className="settings">
       <header className="sub-head">
@@ -1648,6 +1678,7 @@ function SettingsView(props: {
       </header>
       {page === "claude" && <ClaudeSettings settings={settings} setSettings={props.setSettings} />}
       {page === "calendar" && <CalendarSettings {...props} />}
+      {page === "widget" && <WidgetSettings pinnedCount={props.pinnedCount} onGoCalendar={() => setPage("calendar")} />}
       {page === "data" && <DataSettings />}
     </section>
   );
@@ -1793,6 +1824,70 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
         {check === "ok" && <span className="check ok">서버 준비됐어요</span>}
         {check === "fail" && <span className="check fail">서버에 접속이 안 되거나 비밀 값이 빠졌어요</span>}
       </div>
+    </div>
+  );
+}
+
+function WidgetSettings({ pinnedCount, onGoCalendar }: { pinnedCount: number; onGoCalendar: () => void }) {
+  const server = gcal.serverUrl();
+  const [kv, setKv] = useState<"" | "checking" | "ok" | "nokv" | "fail">("");
+  const [copied, setCopied] = useState<"" | "ok" | "show">("");
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const on = () => bump((n) => n + 1);
+    window.addEventListener("pins-synced", on);
+    return () => window.removeEventListener("pins-synced", on);
+  }, []);
+  useEffect(() => {
+    if (!server) return;
+    setKv("checking");
+    fetch(server + "/")
+      .then((r) => r.json())
+      .then((r) => setKv(r.pins ? "ok" : "nokv"))
+      .catch(() => setKv("fail"));
+  }, [server]);
+  const st = widget.syncStatus();
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(widget.scriptableCode());
+      setCopied("ok");
+    } catch {
+      setCopied("show");
+    }
+  };
+
+  return (
+    <div className="panel">
+      <p className="muted small">할 일 목록에서 압정 버튼을 누른 할 일이 아이폰 잠금 화면 위젯에 떠요. 지금 고정한 할 일은 {pinnedCount}개예요.</p>
+      {!server ? (
+        <>
+          <p>먼저 구글 캘린더 설정에서 연결 유지 서버 주소를 넣어 주세요. 위젯도 같은 서버를 써요.</p>
+          <button className="secondary" onClick={onGoCalendar}>구글 캘린더 설정으로</button>
+        </>
+      ) : (
+        <>
+          <div className={`keybox ${kv === "ok" && st.state !== "fail" ? "on" : ""}`}>
+            <span className="dot-big" />
+            <div className="grow">
+              <strong>
+                {kv === "checking" ? "서버 확인 중…" : kv === "nokv" ? "서버에 저장소(PINS)가 아직 없어요" : kv === "fail" ? "서버에 접속이 안 돼요" : st.state === "fail" ? "목록을 올리지 못했어요" : "위젯에 보낼 준비가 됐어요"}
+              </strong>
+              {st.at && <span className="muted small">마지막으로 올린 시각 {new Date(st.at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" })}</span>}
+            </div>
+          </div>
+          <h3>설치 순서</h3>
+          <ol className="steps">
+            <li>Cloudflare에서 서버 코드를 새 버전으로 바꾸고, 저장소(KV)를 <b>PINS</b>라는 이름으로 연결해요. 자세한 순서는 안내 문서에 있어요.</li>
+            <li>앱 스토어에서 무료 앱 <b>Scriptable</b>을 설치해요.</li>
+            <li>아래 버튼으로 위젯 코드를 복사하고, Scriptable에서 + 를 눌러 붙여 넣은 뒤 이름을 "클론"으로 저장해요.</li>
+            <li>잠금 화면을 길게 눌러 <b>사용자화 → 잠금 화면 → 위젯 추가 → Scriptable</b>을 고르고, 위젯을 눌러 Script를 "클론"으로 골라요.</li>
+          </ol>
+          <button onClick={copy}>위젯 코드 복사</button>
+          {copied === "ok" && <p className="check ok">복사했어요. Scriptable에 붙여 넣어 주세요.</p>}
+          {copied === "show" && <textarea className="code" readOnly value={widget.scriptableCode()} onFocus={(e) => e.currentTarget.select()} />}
+          <p className="muted small">잠금 화면 위젯은 아이폰이 정한 때에 새로 고쳐져서, 고정을 바꾸고 위젯에 반영되기까지 몇 분에서 길게는 십여 분 걸릴 수 있어요. 위젯 코드에는 내 목록을 여는 비밀 주소가 들어 있으니 다른 사람에게 보내지 마세요.</p>
+        </>
+      )}
     </div>
   );
 }

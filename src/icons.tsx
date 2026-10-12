@@ -80,3 +80,9 @@ export const IconCompose = () => (
     <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z" />
   </svg>
 );
+export const IconPin = ({ on }: { on?: boolean }) => (
+  <svg {...base} aria-hidden="true">
+    <path d="M9 3.5h6l-1 5.5 3.5 3.5v1.5h-11V12.5L10 9Z" fill={on ? "currentColor" : "none"} />
+    <path d="M12 14v6.5" />
+  </svg>
+);
