@@ -2832,6 +2832,7 @@ function CalendarView(props: {
   if (shown.key !== rangeKey) setShown({ key: rangeKey, events: fromCache() });
   // 구글 캘린더 목록(그룹)별로 달력에서 바로 켜고 끈다. 끈 캘린더 일정은 바로 숨긴다.
   const [cals, setCals] = useState(gcal.cachedCalendars());
+  const [pickCals, setPickCals] = useState(false); // 캘린더 목록 칩은 버튼을 눌렀을 때만 펼친다
   const hidden = new Set(cals.filter((c) => !c.shown).map((c) => c.id));
   const events = shown.events.filter((e) => !e.calendarId || !hidden.has(e.calendarId));
 
@@ -2982,6 +2983,12 @@ function CalendarView(props: {
     <section className="calendar">
       <header className="page-head">
         <h1>캘린더</h1>
+        <div className="head-actions">
+        {props.calOn && cals.length > 1 && (
+          <button className={`btn small tonal cal-toggle${pickCals ? " on" : ""}`} aria-expanded={pickCals} onClick={() => setPickCals(!pickCals)}>
+            캘린더 {cals.filter((c) => c.shown).length}/{cals.length}
+          </button>
+        )}
         <div className="seg" role="tablist">
           <button role="tab" aria-selected={mode === "month"} className={mode === "month" ? "on" : ""} onClick={() => setMode("month")}>
             월
@@ -2989,6 +2996,7 @@ function CalendarView(props: {
           <button role="tab" aria-selected={mode === "list"} className={mode === "list" ? "on" : ""} onClick={() => setMode("list")}>
             목록
           </button>
+        </div>
         </div>
       </header>
 
@@ -3015,7 +3023,7 @@ function CalendarView(props: {
         </div>
       )}
 
-      {props.calOn && cals.length > 1 && (
+      {props.calOn && cals.length > 1 && pickCals && (
         <div className="cal-chips cal-filter" role="group" aria-label="보이는 캘린더">
           {cals.map((c) => (
             <button key={c.id} className={`cal-chip ${c.shown ? "on" : ""}`} aria-pressed={c.shown} onClick={() => toggleCal(c.id, !c.shown)}>

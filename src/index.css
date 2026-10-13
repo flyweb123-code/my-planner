@@ -517,3 +517,5 @@ html.chat-lock .app { min-height: 0; }
 .event-info .cal-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-info .tap-field .chev.open svg { transform: rotate(90deg); }
 .event-info .cal-pick { padding-top: 4px; }
+.calendar .page-head .head-actions { display: flex; align-items: center; gap: 8px; }
+.cal-toggle.on { background: var(--accent-soft); color: var(--accent); }
