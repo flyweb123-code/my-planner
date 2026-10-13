@@ -101,3 +101,11 @@ export const IconClose = () => (
     <path d="M6 6l12 12M18 6 6 18" />
   </svg>
 );
+// 겹친 층: 캘린더 목록(어떤 캘린더를 보일지) 고르기
+export const IconLayers = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M12 4 3 8.5l9 4.5 9-4.5L12 4Z" />
+    <path d="m3 12.5 9 4.5 9-4.5" />
+    <path d="m3 16.5 9 4.5 9-4.5" />
+  </svg>
+);

@@ -9,7 +9,7 @@ import * as gcal from "./gcal";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose, IconLayers } from "./icons";
 import * as files from "./files";
 import { demoItems } from "./demo";
 
@@ -2985,8 +2985,8 @@ function CalendarView(props: {
         <h1>캘린더</h1>
         <div className="head-actions">
         {props.calOn && cals.length > 1 && (
-          <button className={`btn small tonal cal-toggle${pickCals ? " on" : ""}`} aria-expanded={pickCals} onClick={() => setPickCals(!pickCals)}>
-            캘린더 {cals.filter((c) => c.shown).length}/{cals.length}
+          <button className={`icon-btn cal-toggle${pickCals ? " on" : ""}`} aria-label="보일 캘린더 고르기" aria-expanded={pickCals} onClick={() => setPickCals(!pickCals)}>
+            <IconLayers />
           </button>
         )}
         <div className="seg" role="tablist">
