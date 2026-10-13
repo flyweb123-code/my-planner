@@ -639,7 +639,7 @@ export default function App() {
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
             <IconChat />
-            비서
+            클론
           </button>
           <button className={view.name === "list" || view.name === "item" ? "on" : ""} onClick={() => setView({ name: "list" })}>
             <IconList />
