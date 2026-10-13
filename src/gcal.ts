@@ -381,8 +381,11 @@ export const calendarOf = (calId?: string) => {
   return list.find((c) => c.id === calId) ?? (!calId || calId === "primary" ? list.find((c) => c.primary) : undefined);
 };
 // 일정을 다른 캘린더(그룹)로 옮긴다
-export async function moveEvent(token: string, eventId: string, fromCal: string | undefined, toCal: string) {
+// 할 일과 이어진 일정이면 itemId를 넘긴다: 옮긴 뒤 새 캘린더에서 할 일 표시(비공개 속성)가 빠질 수 있어 다시 붙인다.
+// (안 붙이면 앱이 이어진 할 일을 못 찾아 같은 일정이 두 번 보인다)
+export async function moveEvent(token: string, eventId: string, fromCal: string | undefined, toCal: string, itemId?: string) {
   await api(token, `${evPath(fromCal)}/${eventId}/move?destination=${encodeURIComponent(toCal)}`, { method: "POST" });
+  if (itemId) await linkEvent(token, eventId, itemId, toCal);
 }
 
 export async function range(token: string, from: Date, to: Date): Promise<CalEvent[]> {

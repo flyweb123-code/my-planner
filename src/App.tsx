@@ -226,7 +226,13 @@ export default function App() {
     if (!gToken) return;
     gcal
       .upcoming(gToken, 60)
-      .then(setEvents)
+      .then((evs) => {
+        // 할 일 표시가 빠진 일정(예전에 다른 캘린더로 옮긴 일정)은 할 일 쪽 기록으로 다시 이어 준다
+        const byEvent = new Map(itemsRef.current.filter((i) => i.calendarEventId).map((i) => [i.calendarEventId!, i.id]));
+        const fixed = evs.map((e) => (!e.itemId && byEvent.has(e.id) ? { ...e, itemId: byEvent.get(e.id) } : e));
+        for (const e of fixed) if (e.itemId && !evs.find((x) => x.id === e.id)?.itemId && !relinked.has(e.id) && relinked.add(e.id)) gcal.linkEvent(gToken, e.id, e.itemId, e.calendarId).catch(() => {});
+        setEvents(fixed);
+      })
       .catch(async (e) => {
         if (!gcal.savedToken() && gcal.hasSession() && (await refreshToken())) return;
         setGToken(gcal.savedToken());
@@ -663,6 +669,9 @@ export default function App() {
 }
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
+
+// 할 일 표시를 다시 붙인 일정 (한 번만 시도)
+const relinked = new Set<string>();
 
 // 마지막 브리핑. 앱을 다시 열면 이걸 바로 보여 주고 뒤에서 새로 만든다 (기다리는 화면 없이).
 type BriefCache = { at: number; brief: Briefing; evKey: string; v?: number };
@@ -2334,7 +2343,7 @@ function EventEditor({
     try {
       const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
-      await gcal.moveEvent(token, ev.id, from, calId);
+      await gcal.moveEvent(token, ev.id, from, calId, ev.itemId ?? todoId);
       const next = { ...d, calendarId: calId };
       setD(next);
       setOriginal(next);
@@ -2412,7 +2421,7 @@ function EventEditor({
                   : run(async (t) => {
                       // 다른 캘린더(그룹)를 골랐으면 먼저 그 캘린더로 옮기고 내용을 고친다
                       const from = ev.calendarId ?? gcal.calendarOf()?.id;
-                      if (d.calendarId && from && d.calendarId !== from) await gcal.moveEvent(t, ev.id, from, d.calendarId);
+                      if (d.calendarId && from && d.calendarId !== from) await gcal.moveEvent(t, ev.id, from, d.calendarId, ev.itemId ?? todoId);
                       await gcal.updateEvent(t, ev.id, d, d.calendarId ?? ev.calendarId);
                       onSavedEdit(d);
                     }, "구글 캘린더에 저장했어요")
@@ -2872,8 +2881,13 @@ function CalendarView(props: {
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
-  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId) });
-  const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
+  // 일정에 할 일 표시가 빠져 있어도(다른 캘린더로 옮긴 직후 등) 할 일 쪽에 적힌 일정 id로 이어 준다 → 같은 일정이 두 번 안 보이게
+  const itemOfEvent = new Map(props.items.filter((i) => i.calendarEventId).map((i) => [i.calendarEventId!, i.id]));
+  for (const e of events) {
+    const itemId = e.itemId ?? itemOfEvent.get(e.id);
+    push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: itemId ? "todo" : "google", itemId, ev: itemId && !e.itemId ? { ...e, itemId } : e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId) });
+  }
+  const synced = new Set(events.map((e) => e.itemId ?? itemOfEvent.get(e.id)).filter(Boolean));
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId) });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
 
