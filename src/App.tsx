@@ -2528,7 +2528,7 @@ function EventEditor({
               <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
             </div>
             <div className="field memo">
-              <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
+              <textarea placeholder="메모 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
             </div>
           </div>
           <EditPanel
@@ -2593,7 +2593,7 @@ function EventEditor({
             )}
             {d.description && (
               <div className="field info-desc">
-                <span className="info-label">설명</span>
+                <span className="info-label">메모</span>
                 <span className="grow">{d.description}</span>
               </div>
             )}
