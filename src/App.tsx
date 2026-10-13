@@ -2349,6 +2349,7 @@ function EventEditor({
           </div>
         </>
       )}
+      {!editing && (
       <div className="ask">
         <textarea
           rows={1}
@@ -2366,7 +2367,8 @@ function EventEditor({
           <IconUp />
         </button>
       </div>
-      {last && (
+      )}
+      {last && !editing && (
         <button className="resume" onClick={() => onChat()}>
           <IconChat />
           <span className="grow">
@@ -2623,7 +2625,47 @@ function CalendarView(props: {
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId) });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
 
-  const shift = (n: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
+  const [slide, setSlide] = useState<"" | "next" | "prev">("");
+  const shift = (n: number) => {
+    setSlide(n > 0 ? "next" : "prev");
+    setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
+  };
+  // 달력을 손가락으로 좌우로 쓸면 다음/이전 달로 넘어간다. 쓸고 난 뒤의 탭은 날짜 선택으로 치지 않는다.
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  const swiped = useRef(false);
+  const swipeStart = (x: number, y: number) => {
+    swipe.current = { x, y };
+    swiped.current = false;
+  };
+  const swipeEnd = (x: number, y: number) => {
+    const s = swipe.current;
+    swipe.current = null;
+    if (!s) return;
+    const dx = x - s.x;
+    const dy = y - s.y;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swiped.current = true;
+      shift(dx < 0 ? 1 : -1);
+    }
+  };
+  // 날짜를 눌렀을 때 아래 일정 목록 첫 줄까지 스크롤 없이 보이도록 달력 칸 높이를 화면에 맞춘다.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [rowH, setRowH] = useState(74);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const g = gridRef.current;
+      if (!g) return;
+      const top = g.getBoundingClientRect().top + window.scrollY;
+      const tabs = document.querySelector(".tabs")?.getBoundingClientRect();
+      const bottom = tabs ? tabs.top - 8 : window.innerHeight - 96;
+      // 달력 아래: 날짜 제목(약 52px) + 일정 한 줄(약 50px)
+      const avail = bottom - top - 2 - 52 - 50;
+      setRowH(Math.max(44, Math.min(74, Math.floor(avail / 6))));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  });
   const goToday = () => {
     const d = new Date();
     setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -2722,8 +2764,18 @@ function CalendarView(props: {
               </span>
             ))}
           </div>
-          <div className="grid">
+          <div
+            ref={gridRef}
+            key={ymd(month)}
+            className={`grid ${slide ? "slide-" + slide : ""}`}
+            style={{ gridAutoRows: `${rowH}px` }}
+            onTouchStart={(e) => swipeStart(e.touches[0].clientX, e.touches[0].clientY)}
+            onTouchEnd={(e) => swipeEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY)}
+            onPointerDown={(e) => e.pointerType === "mouse" && swipeStart(e.clientX, e.clientY)}
+            onPointerUp={(e) => e.pointerType === "mouse" && swipeEnd(e.clientX, e.clientY)}
+          >
             {cells.map((d) => {
+              const chipCount = rowH >= 68 ? 2 : rowH >= 48 ? 1 : 0;
               const k = ymd(d);
               const list = byDay.get(k) ?? [];
               const out = d.getMonth() !== month.getMonth();
@@ -2732,18 +2784,19 @@ function CalendarView(props: {
                   key={k}
                   className={`cell ${out ? "out" : ""} ${k === selected ? "sel" : ""} ${k === today ? "today" : ""} ${d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""}`}
                   onClick={() => {
+                    if (swiped.current) return void (swiped.current = false);
                     setSelected(k);
                     if (out) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
                   }}
                 >
                   <span className="num">{d.getDate()}</span>
-                  {list.slice(0, 2).map((e) => (
+                  {list.slice(0, chipCount).map((e) => (
                     <span key={e.key} className={`chip-ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)}>
                       {e.kind === "todo" && <span className="todo-dot" />}
                       {e.title}
                     </span>
                   ))}
-                  {list.length > 2 && <span className="more">+{list.length - 2}</span>}
+                  {list.length > chipCount && (chipCount === 2 ? <span className="more">+{list.length - 2}</span> : <span className="more-dot" aria-label={`일정 ${list.length - chipCount}개 더`} />)}
                 </button>
               );
             })}

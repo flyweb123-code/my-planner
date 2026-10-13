@@ -236,7 +236,7 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
   .chat-head { margin-left: -16px; margin-right: -16px; padding-right: 16px; }
   .add { flex-wrap: wrap; }
   .add input:first-child { flex: 1 1 100%; }
-  .cell { min-height: 68px; }
+
 }
 
 /* ---------- 할 일 추가 카드 ---------- */
@@ -476,3 +476,11 @@ html.chat-lock .app { min-height: 0; }
 .event-info .info-label { flex: none; width: 36px; color: var(--muted); font-size: 14px; }
 .event-info .info-desc { align-items: flex-start; padding-top: 14px; padding-bottom: 14px; }
 .event-info .info-desc .grow { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+
+/* 달력: 칸이 낮아져 일정 칩이 다 안 들어갈 때 남은 일정 표시 점, 월 넘김 애니메이션 */
+.grid { touch-action: pan-y; }
+.more-dot { align-self: center; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); flex-shrink: 0; margin-top: 1px; }
+.grid.slide-next { animation: cal-next .22s ease-out; }
+.grid.slide-prev { animation: cal-prev .22s ease-out; }
+@keyframes cal-next { from { opacity: .3; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes cal-prev { from { opacity: .3; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
