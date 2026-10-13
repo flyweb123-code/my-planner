@@ -519,3 +519,6 @@ html.chat-lock .app { min-height: 0; }
 .event-info .cal-pick { padding-top: 4px; }
 .calendar .page-head .head-actions { display: flex; align-items: center; gap: 8px; }
 .cal-toggle.on { background: var(--accent-soft); color: var(--accent); }
+.week-divider { display: flex; align-items: center; gap: 10px; margin: 28px 0 -8px; color: var(--accent); font-size: 13px; font-weight: 700; }
+.week-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.agenda > .week-divider:first-child { margin-top: 8px; }

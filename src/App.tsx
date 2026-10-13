@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
@@ -3122,8 +3122,19 @@ function CalendarView(props: {
           {[...byDay.entries()]
             .filter(([d]) => d >= today && d < ymd(rangeTo))
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([d, list]) => (
-              <div key={d} className="day-panel">
+            .map(([d, list], i, all) => {
+              // 이번 주(일~토) / 다음 주 / 그 후로 나눠 구분선을 넣는다
+              const week = (x: string) => {
+                const t = new Date(today + "T00:00:00");
+                const thisEnd = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 6 - t.getDay()));
+                const nextEnd = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 13 - t.getDay()));
+                return x <= thisEnd ? "이번 주" : x <= nextEnd ? "다음 주" : "그 후";
+              };
+              const g = week(d);
+              return (
+              <Fragment key={d}>
+              {(i === 0 || week(all[i - 1][0]) !== g) && <div className="week-divider"><span>{g}</span></div>}
+              <div className="day-panel">
                 <h3 className={d === today ? "is-today" : ""}>{dayLabel(d)}</h3>
                 <ul className="evlist">
                   {list.map((e) => (
@@ -3131,7 +3142,9 @@ function CalendarView(props: {
                   ))}
                 </ul>
               </div>
-            ))}
+              </Fragment>
+              );
+            })}
           {byDay.size === 0 && <p className="muted">앞으로 30일 동안 일정이 없어요.</p>}
         </div>
       )}
