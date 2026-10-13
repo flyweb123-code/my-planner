@@ -40,6 +40,23 @@ const Suggestions = z.object({
 });
 export type Suggestion = z.infer<typeof Suggestions>["subtasks"][number];
 
+const Memo = z.object({ notes: z.array(z.string().min(1)).min(1) });
+const memoTool = {
+  name: "save_memo",
+  description:
+    "대화에서 나중에 다시 봐야 할 중요한 내용이 나오면 이 항목의 메모에 남긴다. " +
+    "예: 정한 시간·장소, 준비물, 예약·연락처·금액, 사용자가 결정한 것, 꼭 기억해야 할 조건. " +
+    "잡담, 일반적인 조언, 이미 메모에 있는 내용은 남기지 않는다.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      notes: { type: "array", items: { type: "string", description: "한 줄짜리 짧은 한국어 메모" } },
+    },
+    required: ["notes"],
+    additionalProperties: false,
+  },
+};
+
 const suggestTool = {
   name: "suggest_subtasks",
   description:
@@ -106,7 +123,7 @@ export async function streamChat(
   onText: (textSoFar: string) => void,
   subId?: string,
   world?: World,
-): Promise<{ text: string; suggestions: Suggestion[] }> {
+): Promise<{ text: string; suggestions: Suggestion[]; memos: string[] }> {
   const sub = subId ? item.subtasks.find((x) => x.id === subId) : undefined;
   const history = (sub ? sub.chat ?? [] : item.chat).slice(-30).map((m) => ({ role: m.role, content: m.text }));
   const focus = sub
@@ -122,12 +139,14 @@ export async function streamChat(
     system:
       "너는 사용자의 개인 비서이자 대화 상대다. 사용자는 앞으로 할 일 하나에 대해 너와 편하게 이야기한다. " +
       "너의 이름은 '클론'이다. 메신저에서 대화하듯 자연스럽고 친근한 한국어로 답하고, 필요하면 목록이나 굵은 글씨 같은 마크다운을 써도 된다. " +
-      "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. 도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
+      "그 일을 끝내는 데 필요한 구체적인 세부 업무가 정리되면 suggest_subtasks 도구로 제안한다. " +
+      "대화에서 정한 시간·장소, 준비물, 예약·연락처, 결정한 것처럼 나중에 다시 봐야 할 중요한 내용이 나오면 save_memo 도구로 메모에 짧게 남긴다(이미 메모에 있는 건 빼고). " +
+      "도구를 쓸 때도 본문 답변은 먼저 쓴다.\n\n" +
       `지금: ${fmtNow()}\n\n이 항목의 현재 상태:\n${describeItem(item, { perChat: 8, maxLen: 600, skip: subId ?? "item" })}${focus}` +
       "\n\n위의 다른 대화 내용은 사용자와 이미 나눈 이야기다. 이어지는 맥락으로 자연스럽게 활용하고, 거기서 정한 내용과 어긋나지 않게 답한다. " +
       "아래 사용자의 전체 일정도 보고, 겹치는 약속이나 다른 할 일과의 우선순위를 고려해 현실적으로 답한다." +
       (world ? worldText(world, item.id) : ""),
-    tools: [suggestTool],
+    tools: [suggestTool, memoTool],
     tool_choice: { type: "auto" },
     messages: history,
   });
@@ -141,14 +160,20 @@ export async function streamChat(
     text = "이 요청에는 답을 만들지 못했어요. 다르게 말해 주시겠어요?";
   }
   const suggestions: Suggestion[] = [];
+  const memos: string[] = [];
   for (const block of final.content) {
     if (block.type === "tool_use" && block.name === "suggest_subtasks") {
       const parsed = Suggestions.safeParse(block.input);
       if (parsed.success) suggestions.push(...parsed.data.subtasks);
     }
+    if (block.type === "tool_use" && block.name === "save_memo") {
+      const parsed = Memo.safeParse(block.input);
+      if (parsed.success) memos.push(...parsed.data.notes.map((n) => n.trim()).filter(Boolean));
+    }
   }
   if (!text && suggestions.length) text = "이렇게 나눠 보면 어떨까요?";
-  return { text, suggestions };
+  if (!text && memos.length) text = "중요한 내용을 메모에 남겨 둘게요.";
+  return { text, suggestions, memos };
 }
 
 /* ---------------- 홈 비서 대화: 말한 일정을 할 일/세부 업무로 정리 ---------------- */

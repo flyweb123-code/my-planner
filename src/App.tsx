@@ -55,7 +55,8 @@ export default function App() {
     .sort((a, b) => a.ts - b.ts)
     .slice(-6);
   const [view, setView] = useState<View>({ name: "home" });
-  const [events, setEvents] = useState<CalEvent[]>([]);
+  // 지난번에 받아 둔 일정을 먼저 보여 주고, 구글에서 새로 받아 오면 바꾼다.
+  const [events, setEvents] = useState<CalEvent[]>(() => (gcal.wasLinked() ? (gcal.cachedUpcoming(60) ?? []) : []));
   // 캘린더 일정마다 클론과 나눈 대화 (구글 일정 id → 대화용 항목). 할 일 목록과는 따로 둔다.
   const [eventChats, setEventChats] = usePersisted<Record<string, Item>>("eventChats", {});
   // 클론이 보는 일정에는 일정별 대화도 붙여서 넘긴다
@@ -215,7 +216,8 @@ export default function App() {
   }, []);
 
   const loadEvents = useCallback(() => {
-    if (!gToken) return setEvents([]);
+    // 권한을 새로 받는 중일 때는 저장해 둔 일정을 그대로 둔다. (연결을 끊으면 disconnectCalendar가 비운다)
+    if (!gToken) return;
     gcal
       .upcoming(gToken, 60)
       .then(setEvents)
@@ -239,6 +241,7 @@ export default function App() {
     gcal.signOut();
     setGToken(null);
     setLinked(false);
+    setEvents([]);
   };
 
   // 날짜가 있는 할 일은 구글 캘린더에 자동으로 올리고, 바뀌면 고치고, 지우면 같이 지운다.
@@ -324,8 +327,10 @@ export default function App() {
       subtasks: eventChats[ev.id]?.subtasks ?? [],
       chat: eventChats[ev.id]?.chat ?? [],
       calendarEventId: ev.id,
+      colorId: ev.colorId,
     };
     it.calSynced = syncKey(it);
+    files.moveOwner(ev.id, it.id).catch(() => {});
     commit([it, ...itemsRef.current]);
     briefCache = null;
     open(it.id);
@@ -466,6 +471,7 @@ export default function App() {
             onChat={(sub, initial) => setView({ name: "chat", id: current.id, sub, initial })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
+              files.removeOwner(current.id).catch(() => {});
               setItems((all) => all.filter((i) => i.id !== current.id));
               setView({ name: "list" });
             }}
@@ -498,6 +504,14 @@ export default function App() {
             initial={view.initial}
             settings={settings}
             update={(fn) => setEventChats((m) => ({ ...m, [view.ev.id]: fn(eventChatItem(view.ev, m[view.ev.id])) }))}
+            onMemo={async (memo) => {
+              // 일정의 메모 = 구글 캘린더 일정 설명. 다른 기기에서도 보이도록 구글에 바로 적는다.
+              const token = gcal.savedToken() ?? (await gcal.renew());
+              if (!token) throw new Error("구글 캘린더 연결이 끝났어요");
+              const description = await gcal.appendDescription(token, view.ev.id, memo);
+              setView((v) => (v.name === "evchat" && v.ev.id === view.ev.id ? { ...v, ev: { ...v.ev, description }, initial: undefined } : v));
+              loadEvents();
+            }}
             onBack={() => {
               setReopenEvent(view.ev);
               setView({ name: "calendar" });
@@ -859,6 +873,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
   const [swiped, setSwiped] = useState<string | null>(null);
 
   const remove = (id: string) => {
+    files.removeOwner(id).catch(() => {});
     setItems((a) => a.filter((x) => x.id !== id));
     toast("할 일을 삭제했어요");
   };
@@ -1258,6 +1273,7 @@ function ItemView(props: {
   const [menu, setMenu] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [swiped, setSwiped] = useState<string | null>(null);
 
   const addSub = (title: string) =>
@@ -1294,6 +1310,7 @@ function ItemView(props: {
           </button>
           {menu && (
             <div className="popover" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
               <button onClick={() => (update((it) => ({ ...it, done: !it.done })), setMenu(false))}>{item.done ? "완료 취소" : "완료로 표시"}</button>
               <button className="danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))}>
                 {confirmDel ? "한 번 더 누르면 삭제" : "할 일 삭제"}
@@ -1327,6 +1344,15 @@ function ItemView(props: {
         </div>
       )}
 
+      {editing && (
+        <EditPanel onDone={() => setEditing(false)}>
+          <div className="fields">
+            <ColorField value={item.colorId || undefined} onChange={(c) => update((it) => ({ ...it, colorId: c ?? "" }))} />
+          </div>
+          <EventFiles owner={item.id} editable />
+        </EditPanel>
+      )}
+
       <div className="ask">
         <textarea
           rows={1}
@@ -1354,6 +1380,7 @@ function ItemView(props: {
           <span className="chev"><IconRight /></span>
         </button>
       )}
+      {!editing && <EventFiles owner={item.id} />}
 
       <div className="section-head">
         <h3>세부 업무</h3>
@@ -1480,6 +1507,8 @@ function ChatView(props: {
   settings: Settings;
   update: (fn: (it: Item) => Item) => void;
   onBack: () => void;
+  // 클론이 남긴 메모를 어디에 적을지. 없으면 이 할 일의 메모 칸에 덧붙인다.
+  onMemo?: (text: string) => Promise<void>;
 }) {
   const { item, update, settings, subId } = props;
   const sub = subId ? item.subtasks.find((s) => s.id === subId) : undefined;
@@ -1513,8 +1542,19 @@ function ChatView(props: {
     update(() => withUser);
     try {
       const r = await streamChat(settings, withUser, setStreaming, subId, props.world);
+      let saved = "";
+      if (r.memos.length) {
+        const memo = r.memos.map((m) => `• ${m}`).join("\n");
+        try {
+          if (props.onMemo) await props.onMemo(memo);
+          else update((it) => ({ ...it, note: it.note.trim() ? `${it.note.trimEnd()}\n${memo}` : memo }));
+          saved = `\n\n📝 메모에 남겼어요\n${memo}`;
+        } catch (e) {
+          toast(`메모를 남기지 못했어요: ${(e as Error).message}`);
+        }
+      }
       update((it) =>
-        setChat(it, (c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }]),
+        setChat(it, (c) => [...c, { role: "assistant", text: r.text + saved, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }]),
       );
     } catch (e) {
       update((it) => setChat(it, (c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]));
@@ -2042,6 +2082,8 @@ function EventEditor({
     colorId: ev.colorId,
   });
   const [busy, setBusy] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -2059,32 +2101,37 @@ function EventEditor({
   };
 
   return (
-    <section className="detail event-edit">
+    <section className="detail event-edit" onClick={() => (setMenu(false), setConfirmDel(false))}>
       <header className="page-head">
         <button className="back" onClick={onClose}>
           <IconBack />
           캘린더
         </button>
         <div className="head-actions">
-          <button
-            className={`icon-btn del-btn${confirmDel ? " confirm" : ""}`}
-            aria-label={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
-            title={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
-            disabled={busy}
-            onClick={() => {
-              if (!confirmDel) {
-                setConfirmDel(true);
-                return toast("한 번 더 누르면 일정을 삭제해요");
-              }
-              run(async (t) => {
-                await gcal.deleteEvent(t, ev.id);
-                await files.removeOwner(ev.id).catch(() => {});
-              }, "일정을 삭제했어요");
-            }}
-            onBlur={() => setConfirmDel(false)}
-          >
-            <IconTrash />
-          </button>
+          <div className="menu-wrap">
+            <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
+              <IconMore />
+            </button>
+            {menu && (
+              <div className="popover" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
+                <button
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!confirmDel) return setConfirmDel(true);
+                    setMenu(false);
+                    run(async (t) => {
+                      await gcal.deleteEvent(t, ev.id);
+                      await files.removeOwner(ev.id).catch(() => {});
+                    }, "일정을 삭제했어요");
+                  }}
+                >
+                  {confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+                </button>
+              </div>
+            )}
+          </div>
           <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
             저장
           </button>
@@ -2093,18 +2140,6 @@ function EventEditor({
       <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
       <div className="fields">
         <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
-        <div className="field color-field">
-          <span className="color-label">
-            <span className="swatch" style={{ background: gcal.colorHex(d.colorId) ?? "var(--accent)" }} />
-            {gcal.EVENT_COLORS.find((c) => c.id === d.colorId)?.name ?? "캘린더 기본 색"}
-          </span>
-          <div className="swatches" role="radiogroup" aria-label="일정 색">
-            <button type="button" role="radio" aria-checked={!d.colorId} aria-label="캘린더 기본 색" className={`swatch default${!d.colorId ? " on" : ""}`} onClick={() => setD({ ...d, colorId: undefined })} />
-            {gcal.EVENT_COLORS.map((c) => (
-              <button type="button" role="radio" key={c.id} aria-checked={d.colorId === c.id} aria-label={c.name} title={c.name} className={`swatch${d.colorId === c.id ? " on" : ""}`} style={{ background: c.hex }} onClick={() => setD({ ...d, colorId: c.id })} />
-            ))}
-          </div>
-        </div>
         <div className="field memo">
           <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
         </div>
@@ -2112,6 +2147,14 @@ function EventEditor({
           <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
         </div>
       </div>
+      {editing && (
+        <EditPanel onDone={() => setEditing(false)} hint="색은 저장을 눌러야 구글 캘린더에 반영돼요.">
+          <div className="fields">
+            <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
+          </div>
+          <EventFiles owner={ev.id} editable />
+        </EditPanel>
+      )}
       <div className="ask">
         <textarea
           rows={1}
@@ -2139,7 +2182,7 @@ function EventEditor({
           <span className="chev"><IconRight /></span>
         </button>
       )}
-      <EventFiles owner={ev.id} />
+      {!editing && <EventFiles owner={ev.id} />}
       <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
         할 일에 추가
       </button>
@@ -2148,8 +2191,42 @@ function EventEditor({
   );
 }
 
+/* ⋯ → 수정을 눌렀을 때만 보이는 칸 (색, 첨부 파일) */
+function EditPanel({ children, onDone, hint }: { children: React.ReactNode; onDone: () => void; hint?: string }) {
+  return (
+    <div className="edit-panel">
+      <div className="section-head">
+        <h3>수정</h3>
+        <button className="btn small tonal" onClick={onDone}>
+          완료
+        </button>
+      </div>
+      {children}
+      {hint && <p className="muted small hint">{hint}</p>}
+    </div>
+  );
+}
+
+/* 캘린더 일정 색 고르기 (구글 캘린더 색과 같음). undefined = 캘린더 기본 색 */
+function ColorField({ value, onChange }: { value?: string; onChange: (colorId: string | undefined) => void }) {
+  return (
+    <div className="field color-field">
+      <span className="color-label">
+        <span className="swatch" style={{ background: gcal.colorHex(value) ?? "var(--accent)" }} />
+        {gcal.EVENT_COLORS.find((c) => c.id === value)?.name ?? "캘린더 기본 색"}
+      </span>
+      <div className="swatches" role="radiogroup" aria-label="일정 색">
+        <button type="button" role="radio" aria-checked={!value} aria-label="캘린더 기본 색" className={`swatch default${!value ? " on" : ""}`} onClick={() => onChange(undefined)} />
+        {gcal.EVENT_COLORS.map((c) => (
+          <button type="button" role="radio" key={c.id} aria-checked={value === c.id} aria-label={c.name} title={c.name} className={`swatch${value === c.id ? " on" : ""}`} style={{ background: c.hex }} onClick={() => onChange(c.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* 일정별 첨부 파일: 이 기기에 보관하고 눌러서 연다 */
-function EventFiles({ owner }: { owner: string }) {
+function EventFiles({ owner, editable }: { owner: string; editable?: boolean }) {
   const [list, setList] = useState<(files.Attachment & { url: string })[]>([]);
   const [busy, setBusy] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -2183,11 +2260,13 @@ function EventFiles({ owner }: { owner: string }) {
     }
   };
 
+  // 수정 중이 아니면 첨부된 파일을 열어 보기만 한다 (없으면 칸도 숨김)
+  if (!editable && list.length === 0) return null;
   return (
     <div className="ev-files">
       <div className="section-head">
         <h3>첨부 파일</h3>
-        <label className={`filebtn small-btn${busy ? " busy" : ""}`}>
+        {editable && <label className={`filebtn small-btn${busy ? " busy" : ""}`}>
           <IconClip />
           {busy ? "올리는 중" : "파일 추가"}
           <input
@@ -2199,7 +2278,7 @@ function EventFiles({ owner }: { owner: string }) {
               e.target.value = "";
             }}
           />
-        </label>
+        </label>}
       </div>
       {list.length === 0 ? (
         <p className="muted small empty-files">관련 문서나 사진을 올려 두면 여기서 바로 열어볼 수 있어요.</p>
@@ -2218,7 +2297,7 @@ function EventFiles({ owner }: { owner: string }) {
                   </span>
                 </span>
               </a>
-              <button
+              {editable && <button
                 className={`icon-btn file-del${confirmId === a.id ? " confirm" : ""}`}
                 aria-label={confirmId === a.id ? "한 번 더 누르면 삭제" : "첨부 파일 삭제"}
                 onClick={() => {
@@ -2232,7 +2311,7 @@ function EventFiles({ owner }: { owner: string }) {
                 onBlur={() => setConfirmId(null)}
               >
                 {confirmId === a.id ? <IconTrash /> : <IconClose />}
-              </button>
+              </button>}
             </li>
           ))}
         </ul>
@@ -2243,8 +2322,21 @@ function EventFiles({ owner }: { owner: string }) {
 
 const ymd = (d: Date) => d.toLocaleDateString("sv-SE");
 // 할 일이 캘린더에 마지막으로 반영된 모양 (바뀌었는지 비교용)
-const syncKey = (it: Item) => (it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}` : "");
+const syncKey = (it: Item) =>
+  it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}${it.colorId !== undefined ? `|c${it.colorId}` : ""}` : "";
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
+
+// 달력에 보이는 6주(앞뒤 달 일부 포함) 칸
+function monthCells(month: Date): Date[] {
+  const gridStart = new Date(month);
+  gridStart.setDate(1 - month.getDay());
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    return d;
+  });
+}
+const monthRangeEnd = (cells: Date[]) => new Date(cells[41].getTime() + 86400000);
 
 function CalendarView(props: {
   items: Item[];
@@ -2272,7 +2364,6 @@ function CalendarView(props: {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selected, setSelected] = useState(today);
-  const [events, setEvents] = useState<CalEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<CalEvent | null>(props.reopen);
 
@@ -2284,26 +2375,41 @@ function CalendarView(props: {
     }
   }, [mode]);
 
-  // 달력에 보이는 6주(앞뒤 달 일부 포함) 범위
-  const gridStart = new Date(month);
-  gridStart.setDate(1 - month.getDay());
-  const cells = Array.from({ length: 42 }, (_, i) => {
-    const d = new Date(gridStart);
-    d.setDate(gridStart.getDate() + i);
-    return d;
-  });
+  const cells = monthCells(month);
   const rangeFrom = mode === "month" ? cells[0] : new Date(new Date().setHours(0, 0, 0, 0));
-  const rangeTo = mode === "month" ? new Date(cells[41].getTime() + 86400000) : new Date(rangeFrom.getTime() + 30 * 86400000);
+  const rangeTo = mode === "month" ? monthRangeEnd(cells) : new Date(rangeFrom.getTime() + 30 * 86400000);
   const rangeKey = `${ymd(rangeFrom)}~${ymd(rangeTo)}`;
 
+  // 이 기기에 저장해 둔 일정을 바로 보여 주고, 구글에서 새로 받아 오면 바꾼다.
+  // (예전에는 탭을 열 때마다 빈 달력으로 시작해서 받아 올 때까지 일정이 안 보였다.)
+  const fromCache = () => gcal.cached(rangeFrom, rangeTo) ?? [];
+  const [shown, setShown] = useState(() => ({ key: rangeKey, events: fromCache() }));
+  // 달을 넘기면 그 달의 저장본으로 즉시 바꾼다 (그리는 중에 바로 바꿔서 빈 화면이 한 번도 안 보이게).
+  if (shown.key !== rangeKey) setShown({ key: rangeKey, events: fromCache() });
+  const events = shown.events;
+
+  const latest = useRef(rangeKey);
+  latest.current = rangeKey;
   const load = useCallback(() => {
-    if (!props.gToken) return setEvents([]);
+    if (!props.gToken) return;
+    const key = rangeKey;
+    const token = props.gToken;
     setLoading(true);
     gcal
-      .range(props.gToken, rangeFrom, rangeTo)
-      .then(setEvents)
+      .range(token, rangeFrom, rangeTo)
+      .then((evs) => {
+        // 받아 오는 사이에 다른 달로 넘어갔으면 이 결과는 저장만 하고 화면에는 안 쓴다.
+        if (latest.current === key) setShown({ key, events: evs });
+      })
       .catch((e) => toast((e as Error).message))
-      .finally(() => setLoading(false));
+      .finally(() => latest.current === key && setLoading(false));
+    // 앞뒤 달도 미리 받아 둬서 달을 넘길 때 바로 보이게 한다.
+    if (mode === "month")
+      for (const n of [-1, 1]) {
+        const c = monthCells(new Date(month.getFullYear(), month.getMonth() + n, 1));
+        const to = monthRangeEnd(c);
+        if (!gcal.isFresh(c[0], to, 5 * 60_000)) gcal.range(token, c[0], to).catch(() => {});
+      }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.gToken, rangeKey]);
   useEffect(load, [load]);
@@ -2313,7 +2419,7 @@ function CalendarView(props: {
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
   for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) });
   const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
-  for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id });
+  for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId) });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
 
   const shift = (n: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));

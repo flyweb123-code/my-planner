@@ -32,6 +32,7 @@ const TOKEN_KEY = "gcal_token";
 const LINKED_KEY = "gcal_linked";
 const SESSION_KEY = "gcal_session"; // 연결 유지 서버가 준 암호화된 새로 고침 열쇠
 const SERVER_KEY = "gcal_server"; // 연결 유지 서버 주소
+const CACHE_KEY = "gcal_cache"; // 마지막으로 받아 온 일정 (기간별)
 
 export function serverUrl(): string {
   try {
@@ -191,6 +192,7 @@ export function signOut() {
   store(TOKEN_KEY, null);
   store(LINKED_KEY, null);
   store(SESSION_KEY, null);
+  store(CACHE_KEY, null);
 }
 
 async function api(token: string, path: string, init?: RequestInit) {
@@ -245,7 +247,68 @@ export async function upcoming(token: string, days = 30): Promise<CalEvent[]> {
   return range(token, today, new Date(today.getTime() + days * 86400000));
 }
 
+// 캘린더를 열 때마다 구글에서 받아 오는 동안 화면이 비어 보이지 않도록,
+// 받아 온 일정을 기간별로 이 기기에 저장해 두고 먼저 보여 준다. (최근 기간 몇 개만 보관)
+type CacheEntry = { from: string; to: string; at: number; events: CalEvent[] };
+const CACHE_MAX = 12;
+const rangeKey = (from: Date, to: Date) => `${from.toISOString()}~${to.toISOString()}`;
+
+function readCache(): Record<string, CacheEntry> {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCache(from: Date, to: Date, events: CalEvent[]) {
+  const all = readCache();
+  all[rangeKey(from, to)] = { from: from.toISOString(), to: to.toISOString(), at: Date.now(), events };
+  const keep = Object.entries(all)
+    .sort(([, a], [, b]) => b.at - a.at)
+    .slice(0, CACHE_MAX);
+  store(CACHE_KEY, JSON.stringify(Object.fromEntries(keep)));
+}
+
+// 저장해 둔 일정 중 이 기간에 해당하는 것. 같은 기간이 없으면 다른 기간들에서 겹치는 날만 모아 온다.
+// 이 기간 전체를 덮는 저장본이 하나도 없으면 null (빈 화면이 "일정 없음"으로 보이지 않게).
+export function cached(from: Date, to: Date): CalEvent[] | null {
+  const all = readCache();
+  const exact = all[rangeKey(from, to)];
+  if (exact) return exact.events;
+  const f = localDate(from);
+  const t = localDate(new Date(to.getTime() - 1));
+  const entries = Object.values(all).sort((a, b) => a.at - b.at); // 최근 것이 덮어쓰게
+  const covers = entries.some((e) => e.from <= from.toISOString() && e.to >= to.toISOString());
+  const byId = new Map<string, CalEvent>();
+  for (const e of entries) {
+    const ef = localDate(new Date(e.from));
+    const et = localDate(new Date(new Date(e.to).getTime() - 1));
+    for (const ev of e.events) if (ev.date >= f && ev.date <= t && ev.date >= ef && ev.date <= et) byId.set(ev.id, ev);
+  }
+  if (!covers && byId.size === 0) return null;
+  return [...byId.values()].sort((a, b) => (a.date + (a.time || "00:00")).localeCompare(b.date + (b.time || "00:00")));
+}
+
+// 이 기간을 받아 온 지 ms 안쪽이면 true
+export function isFresh(from: Date, to: Date, ms: number): boolean {
+  const e = readCache()[rangeKey(from, to)];
+  return !!e && Date.now() - e.at < ms;
+}
+
+export function cachedUpcoming(days = 30): CalEvent[] | null {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return cached(today, new Date(today.getTime() + days * 86400000));
+}
+
 export async function range(token: string, from: Date, to: Date): Promise<CalEvent[]> {
+  const events = await fetchRange(token, from, to);
+  writeCache(from, to, events);
+  return events;
+}
+
+async function fetchRange(token: string, from: Date, to: Date): Promise<CalEvent[]> {
   const q = new URLSearchParams({
     timeMin: from.toISOString(),
     timeMax: to.toISOString(),
@@ -291,11 +354,17 @@ export async function updateEvent(token: string, eventId: string, e: EventEdit) 
   });
 }
 
-type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string };
+type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string; colorId?: string };
 
 // 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 시작~종료, 없으면 종일 일정.
 function body(it: ItemLike) {
-  const base = { summary: it.title, description: "클론 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
+  const base = {
+    summary: it.title,
+    description: "클론 앱에서 추가한 할 일",
+    extendedProperties: { private: { plannerItemId: it.id } },
+    // 색을 고른 적이 있을 때만 보낸다. ""(기본 색)는 null로 보내야 구글에서 색이 지워진다.
+    ...(it.colorId === undefined ? {} : { colorId: it.colorId || null }),
+  };
   const e = itemEnd(it);
   if (it.time) {
     const start = new Date(`${it.due}T${it.time}:00`);
@@ -329,6 +398,15 @@ export async function linkEvent(token: string, eventId: string, itemId: string) 
     method: "PATCH",
     body: JSON.stringify({ extendedProperties: { private: { plannerItemId: itemId } } }),
   });
+}
+
+// 클론과 이야기하다 남긴 메모를 일정 설명 끝에 덧붙인다. 다른 기기에서 고친 설명을 지우지 않도록 최신 설명을 먼저 읽는다.
+export async function appendDescription(token: string, eventId: string, text: string): Promise<string> {
+  const cur = await api(token, `/calendars/primary/events/${eventId}`);
+  const prev = ((cur?.description as string | undefined) ?? "").trimEnd();
+  const description = prev ? `${prev}\n${text}` : text;
+  await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ description }) });
+  return description;
 }
 
 export async function deleteEvent(token: string, eventId: string) {

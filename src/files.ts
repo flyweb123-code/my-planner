@@ -62,6 +62,14 @@ export async function removeOwner(owner: string): Promise<void> {
   await Promise.all(all.map((a) => remove(a.id)));
 }
 
+// 일정을 할 일로 가져올 때 그 일정의 첨부 파일을 할 일로 옮긴다
+export async function moveOwner(from: string, to: string): Promise<void> {
+  const all = await list(from);
+  await tx("readwrite", (s) => {
+    for (const a of all) s.put({ ...a, owner: to });
+  });
+}
+
 export function sizeLabel(n: number) {
   if (n < 1024) return `${n}B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
