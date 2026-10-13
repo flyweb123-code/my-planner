@@ -253,12 +253,12 @@ export default function App() {
   // 날짜가 있는 할 일은 구글 캘린더에 자동으로 올리고, 바뀌면 고치고, 지우면 같이 지운다.
   // 제목을 타이핑하는 중에 계속 부르지 않도록 잠깐 기다렸다가 한 번에 반영한다.
   const syncPrev = useRef(items);
-  const toDelete = useRef<string[]>([]);
+  const toDelete = useRef<{ eid: string; cal?: string }[]>([]);
   const inFlight = useRef(new Set<string>());
   useEffect(() => {
     const ids = new Set(items.map((i) => i.id));
     // 사용자가 직접 지운 할 일만 캘린더 일정도 지운다. 다른 이유로 목록에서 빠졌으면 일정은 남겨 둔다.
-    for (const p of syncPrev.current) if (!ids.has(p.id) && p.calendarEventId && wasDeletedByUser(p.id)) toDelete.current.push(p.calendarEventId);
+    for (const p of syncPrev.current) if (!ids.has(p.id) && p.calendarEventId && wasDeletedByUser(p.id)) toDelete.current.push({ eid: p.calendarEventId, cal: p.calendarId });
     syncPrev.current = items;
     if (!gToken) return;
     const timer = setTimeout(async () => {
@@ -267,8 +267,8 @@ export default function App() {
       const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) return setGToken(null);
       let changed = false;
-      for (const eid of toDelete.current.splice(0)) {
-        await gcal.deleteEvent(token, eid).catch(() => {});
+      for (const { eid, cal } of toDelete.current.splice(0)) {
+        await gcal.deleteEvent(token, eid, cal).catch(() => {});
         changed = true;
       }
       for (const it of items) {
@@ -278,7 +278,7 @@ export default function App() {
         inFlight.current.add(it.id);
         try {
           if (!want && it.calendarEventId) {
-            await gcal.deleteEvent(token, it.calendarEventId);
+            await gcal.deleteEvent(token, it.calendarEventId, it.calendarId);
             setItems((all) => all.map((x) => (x.id === it.id ? { ...x, calendarEventId: undefined, calSynced: "" } : x)));
           } else if (want && !it.calendarEventId) {
             const eid = await gcal.createForItem(token, it);
@@ -336,6 +336,7 @@ export default function App() {
       subtasks: eventChats[ev.id]?.subtasks ?? [],
       chat: eventChats[ev.id]?.chat ?? [],
       calendarEventId: ev.id,
+      calendarId: ev.calendarId,
       colorId: ev.colorId,
     };
     it.calSynced = syncKey(it);
@@ -352,7 +353,7 @@ export default function App() {
     toast("할 일에 추가했어요");
     try {
       const token = gcal.savedToken() ?? (await gcal.renew());
-      if (token) await gcal.linkEvent(token, ev.id, it.id);
+      if (token) await gcal.linkEvent(token, ev.id, it.id, ev.calendarId);
       loadEvents();
     } catch {
       /* 표시만 못 붙인 것이라 할 일은 그대로 둔다 */
@@ -372,7 +373,7 @@ export default function App() {
         const it = eventToItem(ev);
         if (x.subtasks?.length) it.subtasks = x.subtasks.map((t) => ({ id: uid(), title: t, done: false, byClaude: true, createdAt: Date.now() }));
         commit([it, ...itemsRef.current]);
-        gcal.savedToken() && gcal.linkEvent(gcal.savedToken()!, ev.id, it.id).then(loadEvents, () => {});
+        gcal.savedToken() && gcal.linkEvent(gcal.savedToken()!, ev.id, it.id, ev.calendarId).then(loadEvents, () => {});
         return { result: `캘린더 일정과 이어서 할 일로 추가함. id=${it.id}`, action: { kind: "item", text: `할 일 추가: ${it.title} (캘린더 일정과 이어 둠)`, undo: { itemId: it.id } } };
       }
       const it: Item = {
@@ -398,17 +399,18 @@ export default function App() {
       };
     }
     if (name === "add_event") {
-      const x = input as { title: string; date: string; time?: string; end_time?: string; end_date?: string; location?: string; description?: string };
+      const x = input as { title: string; date: string; time?: string; end_time?: string; end_date?: string; location?: string; description?: string; calendar?: string };
+      const cal = x.calendar ? gcal.cachedCalendars().find((c) => c.writable && c.name === x.calendar) : undefined;
       const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 설정에서 다시 연결해 주세요.");
       const end = x.time ? (x.end_time ? { date: x.end_date ?? x.date, time: x.end_time } : addMinutes(x.date, x.time, 60)) : { date: x.end_date ?? x.date, time: undefined };
-      const d: gcal.EventEdit = { title: x.title, due: x.date, time: x.time || undefined, endDate: end.date, endTime: end.time, location: x.location ?? "", description: x.description ?? "" };
+      const d: gcal.EventEdit = { title: x.title, due: x.date, time: x.time || undefined, endDate: end.date, endTime: end.time, location: x.location ?? "", description: x.description ?? "", calendarId: cal?.id };
       const id = await gcal.createEvent(token, d);
-      createdEvents.current.set(id, { id, title: d.title, date: d.due, time: d.time ?? "", endDate: d.endDate ?? d.due, endTime: d.endTime ?? "", location: d.location, description: d.description } as CalEvent);
+      createdEvents.current.set(id, { id, title: d.title, date: d.due, time: d.time ?? "", endDate: d.endDate ?? d.due, endTime: d.endTime ?? "", location: d.location, description: d.description, calendarId: cal?.id } as CalEvent);
       loadEvents();
       return {
         result: `캘린더에 추가함. event_id=${id}`,
-        action: { kind: "event", text: `캘린더에 일정 추가: ${d.title} (${d.due}${d.time ? " " + d.time : ""})`, undo: { itemId: "", eventId: id } },
+        action: { kind: "event", text: `캘린더에 일정 추가: ${d.title} (${d.due}${d.time ? " " + d.time : ""})${cal && !cal.primary ? ` · ${cal.name}` : ""}`, undo: { itemId: "", eventId: id, calendarId: cal?.id } },
       };
     }
     if (name === "add_subtasks") {
@@ -477,7 +479,7 @@ export default function App() {
       (async () => {
         const token = gcal.savedToken() ?? (await gcal.renew());
         if (!token) return toast("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
-        await gcal.deleteEvent(token, eid).then(loadEvents, (e) => toast((e as Error).message));
+        await gcal.deleteEvent(token, eid, u.calendarId).then(loadEvents, (e) => toast((e as Error).message));
       })();
     }
     if (a.kind === "subtasks") updateItem(u.itemId, (it) => ({ ...it, subtasks: it.subtasks.filter((s) => !u.subtaskIds?.includes(s.id)) }));
@@ -499,7 +501,7 @@ export default function App() {
     toast("할 일에서 뺐어요. 캘린더 일정은 그대로 있어요");
     (async () => {
       const token = gcal.savedToken() ?? (await gcal.renew());
-      if (token) await gcal.unlinkEvent(token, eid).then(loadEvents, () => {});
+      if (token) await gcal.unlinkEvent(token, eid, it.calendarId).then(loadEvents, () => {});
     })();
   };
 
@@ -578,7 +580,7 @@ export default function App() {
               const it = itemsRef.current.find((i) => i.calendarEventId === ev.id);
               if (!it) return;
               updateItem(it.id, (x) => {
-                const next = { ...x, title: d.title, due: d.due, time: d.time, endDate: d.endDate, endTime: d.endTime, colorId: d.colorId ?? (x.colorId === undefined ? undefined : "") };
+                const next = { ...x, calendarId: d.calendarId ?? x.calendarId, title: d.title, due: d.due, time: d.time, endDate: d.endDate, endTime: d.endTime, colorId: d.colorId ?? (x.colorId === undefined ? undefined : "") };
                 return { ...next, calSynced: syncKey(next) };
               });
             }}
@@ -598,7 +600,7 @@ export default function App() {
               // 일정의 메모 = 구글 캘린더 일정 설명. 다른 기기에서도 보이도록 구글에 바로 적는다.
               const token = gcal.savedToken() ?? (await gcal.renew());
               if (!token) throw new Error("구글 캘린더 연결이 끝났어요");
-              const description = await gcal.appendDescription(token, view.ev.id, memo);
+              const description = await gcal.appendDescription(token, view.ev.id, memo, view.ev.calendarId);
               setView((v) => (v.name === "evchat" && v.ev.id === view.ev.id ? { ...v, ev: { ...v.ev, description }, initial: undefined } : v));
               loadEvents();
             }}
@@ -609,7 +611,7 @@ export default function App() {
           />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} onCalendarsChanged={loadEvents} />
         )}
       </main>
       <PullToRefresh />
@@ -1816,6 +1818,7 @@ function SettingsView(props: {
   setItems: (fn: (a: Item[]) => Item[]) => void;
   onConnect: () => void;
   onDisconnect: () => void;
+  onCalendarsChanged: () => void;
 }) {
   const [page, setPage] = useState<SettingsPage>("main");
   const { settings } = props;
@@ -1954,7 +1957,18 @@ function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSett
   );
 }
 
-function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount: number; onConnect: () => void; onDisconnect: () => void }) {
+function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount: number; onConnect: () => void; onDisconnect: () => void; onCalendarsChanged: () => void }) {
+  const [cals, setCals] = useState(gcal.cachedCalendars());
+  useEffect(() => {
+    if (!props.calOn) return;
+    const t = gcal.savedToken();
+    if (t) gcal.calendars(t, true).then(setCals);
+  }, [props.calOn]);
+  const toggleCal = (id: string, shown: boolean) => {
+    gcal.setShown(id, shown);
+    setCals(gcal.cachedCalendars());
+    props.onCalendarsChanged();
+  };
   const [server, setServer] = useState(gcal.serverUrl());
   const [check, setCheck] = useState<"" | "checking" | "ok" | "fail">("");
   const saved = gcal.serverUrl();
@@ -1993,6 +2007,30 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
         </div>
       </div>
       {props.calOn && saved && !keep && <p className="muted small">연결 유지 서버를 쓰려면 연결을 끊고 한 번 다시 연결해 주세요.</p>}
+      {props.calOn && gcal.needsCalendarScope() && (
+        <div className="banner">
+          <span className="grow">개인·업무 같은 캘린더 그룹을 쓰려면 구글 연결을 한 번 다시 해 주세요.</span>
+          <button className="btn small" onClick={props.onConnect}>다시 연결</button>
+        </div>
+      )}
+      {props.calOn && cals.length > 1 && (
+        <>
+          <label>보여 줄 캘린더</label>
+          <ul className="menu cal-list">
+            {cals.map((c) => (
+              <li key={c.id}>
+                <span className="swatch tiny" style={{ background: c.color }} />
+                <span className="grow">
+                  {c.name}
+                  {!c.writable && <span className="muted small"> · 읽기 전용</span>}
+                </span>
+                <input type="checkbox" className="switch" aria-label={`${c.name} 보이기`} checked={c.shown} onChange={(e) => toggleCal(c.id, e.target.checked)} />
+              </li>
+            ))}
+          </ul>
+          <p className="muted small">구글 캘린더에 있는 캘린더(그룹)를 그대로 가져와요. 일정 화면의 ⋯ → 수정에서 일정을 다른 캘린더로 옮길 수 있어요.</p>
+        </>
+      )}
       {props.calOn ? (
         <button className="secondary danger-text" onClick={props.onDisconnect}>
           연결 끊기
@@ -2198,6 +2236,11 @@ function eventChatItem(ev: CalEvent, saved?: Item): Item {
 
 type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
 // 구글에서 색을 정한 일정은 그 색으로 칠한다
+// 일정 색을 따로 안 고른 일정은 그 캘린더(그룹) 색으로. 기본 캘린더는 앱 기본 색 그대로.
+const calColor = (calId?: string) => {
+  const c = gcal.calendarOf(calId);
+  return c && !c.primary ? c.color : undefined;
+};
 const evColor = (e: DayEntry) => (e.color ? ({ "--ev": e.color } as React.CSSProperties) : undefined);
 
 /* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
@@ -2233,6 +2276,7 @@ function EventEditor({
     location: ev.location,
     description: ev.description,
     colorId: ev.colorId,
+    calendarId: ev.calendarId ?? gcal.calendarOf()?.id,
   }));
   const [d, setD] = useState<gcal.EventEdit>({
     title: ev.title,
@@ -2243,7 +2287,11 @@ function EventEditor({
     location: ev.location,
     description: ev.description,
     colorId: ev.colorId,
+    calendarId: ev.calendarId ?? gcal.calendarOf()?.id,
   });
+  const cal = gcal.calendarOf(d.calendarId);
+  // 휴일 캘린더처럼 읽기만 되는 캘린더의 일정은 고칠 수 없다
+  const readOnly = !isNew && !!gcal.calendarOf(ev.calendarId) && !gcal.calendarOf(ev.calendarId)!.writable;
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(!!isNew);
@@ -2272,7 +2320,7 @@ function EventEditor({
         </button>
         <div className="head-actions">
           {!editing && <ChatIconButton count={chat.length} onClick={() => onChat()} label="이 일정에 대해 클론과 대화" />}
-          {!isNew && (
+          {!isNew && !readOnly && (
           <div className="menu-wrap">
             <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
               <IconMore />
@@ -2287,7 +2335,7 @@ function EventEditor({
                     if (!confirmDel) return setConfirmDel(true);
                     setMenu(false);
                     run(async (t) => {
-                      await gcal.deleteEvent(t, ev.id);
+                      await gcal.deleteEvent(t, ev.id, ev.calendarId);
                       await files.removeOwner(ev.id).catch(() => {});
                     }, "일정을 삭제했어요");
                   }}
@@ -2304,7 +2352,10 @@ function EventEditor({
                 isNew
                   ? run((t) => gcal.createEvent(t, d), "캘린더에 일정을 추가했어요")
                   : run(async (t) => {
-                      await gcal.updateEvent(t, ev.id, d);
+                      // 다른 캘린더(그룹)를 골랐으면 먼저 그 캘린더로 옮기고 내용을 고친다
+                      const from = ev.calendarId ?? gcal.calendarOf()?.id;
+                      if (d.calendarId && from && d.calendarId !== from) await gcal.moveEvent(t, ev.id, from, d.calendarId);
+                      await gcal.updateEvent(t, ev.id, d, d.calendarId ?? ev.calendarId);
                       onSavedEdit(d);
                     }, "구글 캘린더에 저장했어요")
               }
@@ -2338,6 +2389,7 @@ function EventEditor({
             hint={isNew ? "오른쪽 위 저장을 누르면 구글 캘린더에 추가돼요. 첨부 파일은 저장한 뒤 넣을 수 있어요." : "바꾼 내용은 오른쪽 위 저장을 눌러야 구글 캘린더에 반영돼요."}
           >
             <div className="fields">
+              <CalendarField value={d.calendarId} onChange={(c) => setD({ ...d, calendarId: c })} />
               <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
             </div>
             {!isNew && <EventFiles owner={ev.id} editable />}
@@ -2350,11 +2402,21 @@ function EventEditor({
             {d.title || "(제목 없음)"}
           </h1>
           <div className="fields event-info">
-            <button className="field tap-field" onClick={() => setEditing(true)} aria-label="시간 수정">
+            <button className="field tap-field" onClick={() => !readOnly && setEditing(true)} aria-label="시간 수정">
               <span className="sched-icon"><IconClock /></span>
               <span className="grow">{schedText(d)}</span>
-              <span className="chev"><IconRight /></span>
+              {!readOnly && <span className="chev"><IconRight /></span>}
             </button>
+            {cal && gcal.cachedCalendars().length > 1 && (
+              <div className="field">
+                <span className="info-label">캘린더</span>
+                <span className="grow cal-name">
+                  <span className="swatch tiny" style={{ background: cal.color }} />
+                  {cal.name}
+                  {readOnly && <span className="muted small"> · 읽기 전용</span>}
+                </span>
+              </div>
+            )}
             {d.location && (
               <div className="field">
                 <span className="info-label">위치</span>
@@ -2491,6 +2553,25 @@ function EditPanel({ children, onDone, hint, doneLabel = "완료", title = "수�
       </div>
       {children}
       {hint && <p className="muted small hint">{hint}</p>}
+    </div>
+  );
+}
+
+/* 일정이 들어갈 구글 캘린더(그룹) 고르기. 쓸 수 있는 캘린더만 */
+function CalendarField({ value, onChange }: { value?: string; onChange: (calId: string) => void }) {
+  const list = gcal.cachedCalendars().filter((c) => c.writable);
+  if (list.length < 2) return null;
+  return (
+    <div className="field cal-field">
+      <span className="color-label">캘린더</span>
+      <div className="cal-chips" role="radiogroup" aria-label="캘린더">
+        {list.map((c) => (
+          <button type="button" role="radio" key={c.id} aria-checked={value === c.id} className={`cal-chip${value === c.id ? " on" : ""}`} onClick={() => onChange(c.id)}>
+            <span className="swatch tiny" style={{ background: c.color }} />
+            {c.name}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2708,7 +2789,7 @@ function CalendarView(props: {
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
-  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) });
+  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId) });
   const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId) });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
@@ -2840,6 +2921,14 @@ function CalendarView(props: {
               설정
             </button>
           )}
+        </div>
+      )}
+      {props.calOn && gcal.needsCalendarScope() && (
+        <div className="banner">
+          <span className="grow">개인·업무 같은 캘린더 그룹도 보려면 구글 연결을 한 번 다시 해 주세요.</span>
+          <button className="btn small" onClick={props.onConnect}>
+            다시 연결
+          </button>
         </div>
       )}
 

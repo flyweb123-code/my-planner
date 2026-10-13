@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { Action, HomeThread, Item, Msg, Settings } from "./store";
-import type { CalEvent } from "./gcal";
+import { type CalEvent, cachedCalendars, calendarOf } from "./gcal";
 
 // 개인용 앱이라 브라우저에서 내 API 키로 바로 호출한다. 키는 이 기기에만 저장된다.
 function client(s: Settings) {
@@ -99,6 +99,10 @@ const eventsText = (events: CalEvent[], max = 80, ids = false, full = false) => 
         : `${e.date}${e.endDate && e.endDate !== e.date ? "~" + e.endDate : ""} 종일`;
       const extra = [
         e.itemId ? "(할 일 목록에도 있음)" : "",
+        (() => {
+          const c = calendarOf(e.calendarId);
+          return c && !c.primary ? `캘린더: ${c.name}` : "";
+        })(),
         e.location ? `장소: ${clip(e.location, 80)}` : "",
         e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
         e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(full ? -20 : -3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 500 : 150)}`).join(" / ") : "",
@@ -198,6 +202,7 @@ export const ToolInputs = {
     time: z.string().optional(),
     end_time: z.string().optional(),
     end_date: z.string().optional(),
+    calendar: z.string().optional(),
     location: z.string().optional(),
     description: z.string().optional(),
   }),
@@ -214,6 +219,7 @@ export type ToolName = keyof typeof ToolInputs;
 export type ToolRunner = (name: ToolName, input: unknown) => Promise<{ result: string; action?: Action }>;
 
 const homeTools = (calendar: boolean): Anthropic.Tool[] => {
+  const groups = cachedCalendars().filter((c) => c.writable).map((c) => c.name);
   const tools: Anthropic.Tool[] = [
     {
       name: "add_item",
@@ -250,6 +256,9 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
                 end_date: { type: "string", description: "여러 날에 걸치면 끝나는 날 YYYY-MM-DD. 아니면 생략" },
                 location: { type: "string", description: "장소. 없으면 생략" },
                 description: { type: "string", description: "준비물 같은 메모. 없으면 생략" },
+                ...(groups.length > 1
+                  ? { calendar: { type: "string", enum: groups, description: "넣을 구글 캘린더(그룹). 사용자가 말하지 않았으면 생략(기본 캘린더)" } }
+                  : {}),
               },
               required: ["title", "date"],
               additionalProperties: false,

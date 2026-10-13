@@ -500,3 +500,12 @@ html.chat-lock .app { min-height: 0; }
 .event-info .tap-field { width: 100%; background: none; border: 0; border-radius: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .event-info .tap-field .chev { color: var(--faint); display: inline-flex; margin-left: auto; }
 .event-info .tap-field .chev svg { width: 16px; height: 16px; }
+
+/* 캘린더(그룹) */
+.swatch.tiny { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.cal-name { display: inline-flex; align-items: center; gap: 6px; }
+.cal-field { flex-direction: column; align-items: stretch; gap: 8px; padding-top: 12px; padding-bottom: 12px; }
+.cal-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cal-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); color: var(--text); border: 1px solid transparent; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 500; }
+.cal-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.cal-list li { display: flex; align-items: center; gap: 10px; }

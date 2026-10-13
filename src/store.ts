@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "./toast";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string };
-export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; eventId?: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
+export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; eventId?: string; calendarId?: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
 export type Msg = {
   role: "user" | "assistant";
   text: string;
@@ -24,6 +24,7 @@ export type Item = {
   endDate?: string; // 끝나는 날 (없으면 due와 같은 날)
   endTime?: string; // 끝나는 시각 (없으면 시작 1시간 뒤)
   calendarEventId?: string;
+  calendarId?: string; // 일정이 들어 있는 구글 캘린더(그룹). 없으면 기본 캘린더
   calSynced?: string; // 마지막으로 캘린더에 반영한 제목/날짜/시간
   pinned?: boolean; // 아이폰 잠금 화면 위젯에 띄울 할 일
   colorId?: string; // 캘린더 일정 색 (구글 colorId). ""이면 기본 색으로 되돌림, 없으면 건드리지 않음
