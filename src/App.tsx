@@ -14,7 +14,8 @@ import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, Ic
 import * as files from "./files";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "sub"; id: string; sub: string } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; initial?: string } | { name: "settings" };
+// from: 캘린더에서 연 일정 화면에서 들어왔으면 그 일정 (뒤로 가면 캘린더의 그 일정으로)
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string; from?: CalEvent } | { name: "sub"; id: string; sub: string; from?: CalEvent } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; sub?: string; initial?: string } | { name: "evsub"; ev: CalEvent; sub: string } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -513,6 +514,48 @@ export default function App() {
   };
 
   const open = (id: string) => id && setView({ name: "item", id });
+
+  // 할 일과 이어진 일정을 고쳤으면 할 일도 같은 날짜·시간·색으로 맞춘다 (다시 덮어쓰지 않게)
+  const syncTodoFromEvent = (ev: CalEvent, d: gcal.EventEdit) => {
+    const it = itemsRef.current.find((i) => i.calendarEventId === ev.id);
+    if (!it) return;
+    updateItem(it.id, (x) => {
+      const next = { ...x, calendarId: d.calendarId ?? x.calendarId, title: d.title, due: d.due, time: d.time, endDate: d.endDate, endTime: d.endTime, colorId: d.colorId ?? (x.colorId === undefined ? undefined : "") };
+      return { ...next, calSynced: syncKey(next) };
+    });
+  };
+  // 일정 화면의 세부 업무·대화: 할 일과 이어졌으면 그 할 일 것(할 일 탭과 똑같이), 아니면 일정 대화용 항목
+  // from: 캘린더에서 열었으면 그 일정 → 세부 업무·대화에서 뒤로 가면 캘린더로 돌아온다
+  const eventHost = (ev: CalEvent, from?: CalEvent): EventHost => {
+    const todo = items.find((i) => i.calendarEventId === ev.id) ?? (ev.itemId ? items.find((i) => i.id === ev.itemId) : undefined);
+    if (todo)
+      return {
+        item: todo,
+        linked: true,
+        update: (fn) => updateItem(todo.id, fn),
+        onOpenSub: (sub) => setView({ name: "sub", id: todo.id, sub, from }),
+        onChat: (initial) => setView({ name: "chat", id: todo.id, initial, from }),
+      };
+    return {
+      item: eventChatItem(ev, eventChats[ev.id]),
+      linked: false,
+      update: (fn) => setEventChats((m) => ({ ...m, [ev.id]: fn(eventChatItem(ev, m[ev.id])) })),
+      onOpenSub: (sub) => setView({ name: "evsub", ev, sub }),
+      onChat: (initial) => setView({ name: "evchat", ev, initial }),
+    };
+  };
+  const backToEvent = (ev: CalEvent) => {
+    setReopenEvent(ev);
+    setView({ name: "calendar" });
+  };
+  // 할 일 탭에서 연 할 일이 캘린더 일정과 이어져 있으면 일정 화면을 그대로 보여 준다
+  const linkedEvent = (it: Item): CalEvent | undefined => {
+    if (!calOn || !it.calendarEventId || !it.due) return undefined;
+    return (
+      events.find((e) => e.id === it.calendarEventId) ??
+      ({ id: it.calendarEventId, title: it.title, date: it.due, time: it.time ?? "", endDate: it.endDate ?? it.due, endTime: it.endTime ?? "", location: "", description: "", calendarId: it.calendarId, colorId: it.colorId || undefined, itemId: it.id } as CalEvent)
+    );
+  };
   const current = view.name === "item" || view.name === "chat" || view.name === "sub" ? items.find((i) => i.id === view.id) : undefined;
 
   // 대화 화면이 떠 있는 동안에는 뒤쪽 문서가 스크롤되지 않게 잠근다.
@@ -545,7 +588,30 @@ export default function App() {
           />
         )}
         {view.name === "list" && <List items={items} setItems={setItems} onOpen={open} onRemove={removeTodo} />}
-        {view.name === "item" && current && (
+        {view.name === "item" && current && linkedEvent(current) && (() => {
+          const ev = linkedEvent(current)!;
+          const host = eventHost(ev);
+          return (
+            <EventEditor
+              key={ev.id}
+              ev={ev}
+              host={host}
+              todoId={current.id}
+              chat={current.chat}
+              onChat={host.onChat}
+              onClose={() => setView({ name: "list" })}
+              onAddTodo={() => {}}
+              onSavedEdit={(d) => syncTodoFromEvent(ev, d)}
+              onChanged={loadEvents}
+              onSaved={() => {
+                loadEvents();
+                setView({ name: "list" });
+              }}
+              backLabel="할 일"
+            />
+          );
+        })()}
+        {view.name === "item" && current && !linkedEvent(current) && (
           <ItemView
             item={current}
             gToken={gToken}
@@ -560,15 +626,24 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView(view.sub ? { name: "sub", id: current.id, sub: view.sub } : { name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => (view.sub ? setView({ name: "sub", id: current.id, sub: view.sub, from: view.from }) : view.from ? backToEvent(view.from) : setView({ name: "item", id: current.id }))} />
         )}
         {view.name === "sub" && current && current.subtasks.some((s) => s.id === view.sub) && (
           <SubtaskView
             item={current}
             sub={current.subtasks.find((s) => s.id === view.sub)!}
             update={(fn) => updateItem(current.id, fn)}
-            onChat={() => setView({ name: "chat", id: current.id, sub: view.sub })}
-            onBack={() => setView({ name: "item", id: current.id })}
+            onChat={() => setView({ name: "chat", id: current.id, sub: view.sub, from: view.from })}
+            onBack={() => (view.from ? backToEvent(view.from) : setView({ name: "item", id: current.id }))}
+          />
+        )}
+        {view.name === "evsub" && (eventChats[view.ev.id]?.subtasks ?? []).some((s) => s.id === view.sub) && (
+          <SubtaskView
+            item={eventChatItem(view.ev, eventChats[view.ev.id])}
+            sub={eventChats[view.ev.id]!.subtasks.find((s) => s.id === view.sub)!}
+            update={(fn) => setEventChats((m) => ({ ...m, [view.ev.id]: fn(eventChatItem(view.ev, m[view.ev.id])) }))}
+            onChat={() => setView({ name: "evchat", ev: view.ev, sub: view.sub })}
+            onBack={() => backToEvent(view.ev)}
           />
         )}
         {view.name === "calendar" && (
@@ -583,24 +658,18 @@ export default function App() {
             onOpen={open}
             onAddTodo={addEventAsTodo}
             onCalendarsChanged={loadEvents}
-            onEventSaved={(ev, d) => {
-              // 할 일과 이어진 일정을 고쳤으면 할 일도 같은 날짜·시간·색으로 맞춘다 (다시 덮어쓰지 않게)
-              const it = itemsRef.current.find((i) => i.calendarEventId === ev.id);
-              if (!it) return;
-              updateItem(it.id, (x) => {
-                const next = { ...x, calendarId: d.calendarId ?? x.calendarId, title: d.title, due: d.due, time: d.time, endDate: d.endDate, endTime: d.endTime, colorId: d.colorId ?? (x.colorId === undefined ? undefined : "") };
-                return { ...next, calSynced: syncKey(next) };
-              });
-            }}
+            onEventSaved={syncTodoFromEvent}
+            hostFor={(ev) => eventHost(ev, ev)}
             onChat={(ev, initial) => setView({ name: "evchat", ev, initial })}
             onGoSettings={() => setView({ name: "settings" })}
           />
         )}
         {view.name === "evchat" && (
           <ChatView
-            key={view.ev.id}
+            key={view.ev.id + (view.sub ?? "")}
             world={{ items, events: aiEvents, home: recentHome }}
             item={eventChatItem(view.ev, eventChats[view.ev.id])}
+            subId={view.sub}
             initial={view.initial}
             settings={settings}
             update={(fn) => setEventChats((m) => ({ ...m, [view.ev.id]: fn(eventChatItem(view.ev, m[view.ev.id])) }))}
@@ -612,10 +681,7 @@ export default function App() {
               setView((v) => (v.name === "evchat" && v.ev.id === view.ev.id ? { ...v, ev: { ...v.ev, description }, initial: undefined } : v));
               loadEvents();
             }}
-            onBack={() => {
-              setReopenEvent(view.ev);
-              setView({ name: "calendar" });
-            }}
+            onBack={() => (view.sub ? setView({ name: "evsub", ev: view.ev, sub: view.sub }) : backToEvent(view.ev))}
           />
         )}
         {view.name === "settings" && (
@@ -1405,18 +1471,11 @@ function ItemView(props: {
   onOpenSub: (subId: string) => void;
 }) {
   const { item, update } = props;
-  const [newSub, setNewSub] = useState("");
   const [ask, setAsk] = useState("");
   const [menu, setMenu] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [swiped, setSwiped] = useState<string | null>(null);
-
-  const addSub = (title: string) =>
-    update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
-  const toggleSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
-  const removeSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== id) }));
 
   const doneCount = item.subtasks.filter((s) => s.done).length;
   const last = item.chat[item.chat.length - 1];
@@ -1435,7 +1494,7 @@ function ItemView(props: {
   };
 
   return (
-    <section className="detail" onClick={() => (setSwiped(null), setMenu(false))}>
+    <section className="detail" onClick={() => setMenu(false)}>
       <header className="page-head">
         <button className="back" onClick={props.onBack}>
           <IconBack />
@@ -1519,6 +1578,22 @@ function ItemView(props: {
       )}
       {!editing && <EventFiles owner={item.id} />}
 
+      <SubtaskSection item={item} update={update} onOpenSub={props.onOpenSub} />
+    </section>
+  );
+}
+
+/* 세부 업무 목록: 할 일 화면과 일정 화면이 같이 쓴다. item은 할 일이거나, 할 일과 안 이어진 일정의 대화용 항목 */
+function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: (it: Item) => Item) => void; onOpenSub: (subId: string) => void }) {
+  const [newSub, setNewSub] = useState("");
+  const [swiped, setSwiped] = useState<string | null>(null);
+  const plain = (t: string) => t.replace(/[*`#]/g, "");
+  const addSub = (title: string) =>
+    update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
+  const toggleSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
+  const removeSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== id) }));
+  return (
+    <div className="subtask-section" onClick={() => setSwiped(null)}>
       <div className="section-head">
         <h3>세부 업무</h3>
         {item.subtasks.length > 0 && <span className="muted small">왼쪽으로 밀면 완료, 삭제</span>}
@@ -1531,7 +1606,7 @@ function ItemView(props: {
               key={s.id}
               open={swiped === s.id}
               onOpenChange={(o) => setSwiped(o ? s.id : null)}
-              onTap={() => props.onOpenSub(s.id)}
+              onTap={() => onOpenSub(s.id)}
               actions={[
                 { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
                 { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
@@ -1562,7 +1637,7 @@ function ItemView(props: {
         </li>
       </ul>
       {item.subtasks.length === 0 && <p className="muted small hint">클론에게 물어보면 필요한 세부 업무를 나눠 줘요.</p>}
-    </section>
+    </div>
   );
 }
 
@@ -2253,6 +2328,9 @@ function eventChatItem(ev: CalEvent, saved?: Item): Item {
   };
 }
 
+// 일정 화면의 세부 업무·대화가 들어 있는 곳
+type EventHost = { item: Item; linked: boolean; update: (fn: (it: Item) => Item) => void; onOpenSub: (subId: string) => void; onChat: (initial?: string) => void };
+
 type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
 // 구글에서 색을 정한 일정은 그 색으로 칠한다
 // 일정 색을 따로 안 고른 일정은 그 캘린더(그룹) 색으로. 기본 캘린더는 앱 기본 색 그대로.
@@ -2271,10 +2349,11 @@ function EventEditor({
   onAddTodo,
   onChat,
   todoId,
-  onOpenTodo,
   onSavedEdit,
   isNew,
   onChanged,
+  host,
+  backLabel = "캘린더",
 }: {
   ev: CalEvent;
   chat: Msg[];
@@ -2283,10 +2362,11 @@ function EventEditor({
   onAddTodo: () => void;
   onChat: (initial?: string) => void;
   todoId?: string; // 이 일정과 이어진 할 일 (이 기기에 있을 때)
-  onOpenTodo: (id: string) => void;
   onSavedEdit: (d: gcal.EventEdit) => void;
   isNew?: boolean; // 달력에서 날짜를 눌러 새 일정을 만드는 중
   onChanged?: () => void; // 화면을 닫지 않고 바로 바꾼 내용이 있을 때 (캘린더 옮기기)
+  host?: EventHost; // 세부 업무를 담는 쪽 (이어진 할 일, 아니면 일정 대화용 항목)
+  backLabel?: string;
 }) {
   const [original, setOriginal] = useState<gcal.EventEdit>(() => ({
     title: ev.title,
@@ -2311,6 +2391,8 @@ function EventEditor({
     calendarId: ev.calendarId ?? gcal.calendarOf()?.id,
   });
   const cal = gcal.calendarOf(d.calendarId);
+  // 할 일과 이어진 일정의 첨부 파일은 할 일 쪽에 들어 있다 (할 일에 추가할 때 옮겨 둠)
+  const filesOwner = host?.linked ? host.item.id : ev.id;
   // 휴일 캘린더처럼 읽기만 되는 캘린더의 일정은 고칠 수 없다
   const readOnly = !isNew && !!gcal.calendarOf(ev.calendarId) && !gcal.calendarOf(ev.calendarId)!.writable;
   const [busy, setBusy] = useState(false);
@@ -2383,7 +2465,7 @@ function EventEditor({
         ) : (
           <button className="back" onClick={onClose}>
             <IconBack />
-            캘린더
+            {backLabel}
           </button>
         )}
         <div className="head-actions">
@@ -2396,6 +2478,9 @@ function EventEditor({
             {menu && (
               <div className="popover" onClick={(e) => e.stopPropagation()}>
                 <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
+                {host?.linked && (
+                  <button onClick={() => (host.update((it) => ({ ...it, done: !it.done })), setMenu(false))}>{host.item.done ? "완료 취소" : "완료로 표시"}</button>
+                )}
                 <button
                   className="danger"
                   disabled={busy}
@@ -2459,7 +2544,7 @@ function EventEditor({
               <CalendarField value={d.calendarId} onChange={(c) => setD({ ...d, calendarId: c })} />
               <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
             </div>
-            {!isNew && <EventFiles owner={ev.id} editable />}
+            {!isNew && <EventFiles owner={filesOwner} editable />}
           </EditPanel>
         </>
       ) : (
@@ -2467,6 +2552,7 @@ function EventEditor({
           <h1 className="title-view">
             {todoId && <span className="todo-dot" aria-label="할 일" />}
             {d.title || "(제목 없음)"}
+            {host?.linked && host.item.done && <span className="pill-done">완료</span>}
           </h1>
           <div className="fields event-info">
             <button className="field tap-field" onClick={() => !readOnly && setEditing(true)} aria-label="시간 수정">
@@ -2514,18 +2600,13 @@ function EventEditor({
           </div>
         </>
       )}
-      {!editing && <EventFiles owner={ev.id} />}
-      {!isNew && (<>
-      {todoId ? (
-        <button className="wide add-todo" onClick={() => onOpenTodo(todoId)}>
-          할 일 열기
-        </button>
-      ) : (
+      {!editing && !isNew && host && <SubtaskSection item={host.item} update={host.update} onOpenSub={host.onOpenSub} />}
+      {!editing && <EventFiles owner={filesOwner} />}
+      {!isNew && !todoId && (
         <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
           할 일에 추가
         </button>
       )}
-      </>)}
     </section>
   );
 }
@@ -2802,6 +2883,7 @@ function CalendarView(props: {
   onEventSaved: (ev: CalEvent, d: gcal.EventEdit) => void;
   onGoSettings: () => void;
   onCalendarsChanged: () => void;
+  hostFor: (ev: CalEvent) => EventHost;
 }) {
   const today = ymd(new Date());
   const [mode, setMode] = useState<"month" | "list">(() => {
@@ -2968,7 +3050,6 @@ function CalendarView(props: {
         chat={[]}
         onClose={() => setCreating(null)}
         onAddTodo={() => {}}
-        onOpenTodo={() => {}}
         onSavedEdit={() => {}}
         onChat={() => {}}
         onSaved={() => {
@@ -2977,24 +3058,27 @@ function CalendarView(props: {
         }}
       />
     );
-  if (editing)
+  if (editing) {
+    const host = props.hostFor(editing);
     return (
       <EventEditor
+        key={editing.id}
+        host={host}
         ev={editing}
         onClose={() => setEditing(null)}
         onAddTodo={() => props.onAddTodo(editing)}
-        todoId={editing.itemId && props.items.some((i) => i.id === editing.itemId) ? editing.itemId : undefined}
-        onOpenTodo={props.onOpen}
+        todoId={host.linked ? host.item.id : undefined}
         onSavedEdit={(d) => props.onEventSaved(editing, d)}
         onChanged={load}
-        chat={props.eventChats[editing.id]?.chat ?? []}
-        onChat={(initial) => props.onChat(editing, initial)}
+        chat={host.item.chat}
+        onChat={host.onChat}
         onSaved={() => {
           setEditing(null);
           load();
         }}
       />
     );
+  }
 
   return (
     <section className="calendar">
