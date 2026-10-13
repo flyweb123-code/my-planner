@@ -513,3 +513,7 @@ html.chat-lock .app { min-height: 0; }
 .cal-filter::-webkit-scrollbar { display: none; }
 .cal-filter .cal-chip { flex: 0 0 auto; padding: 4px 10px; font-size: 12px; }
 .cal-filter .cal-chip:not(.on) { color: var(--muted); }
+.event-info .info-label { width: auto; min-width: 44px; white-space: nowrap; }
+.event-info .cal-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-info .tap-field .chev.open svg { transform: rotate(90deg); }
+.event-info .cal-pick { padding-top: 4px; }

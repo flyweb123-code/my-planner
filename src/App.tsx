@@ -2261,6 +2261,7 @@ function EventEditor({
   onOpenTodo,
   onSavedEdit,
   isNew,
+  onChanged,
 }: {
   ev: CalEvent;
   chat: Msg[];
@@ -2272,8 +2273,9 @@ function EventEditor({
   onOpenTodo: (id: string) => void;
   onSavedEdit: (d: gcal.EventEdit) => void;
   isNew?: boolean; // 달력에서 날짜를 눌러 새 일정을 만드는 중
+  onChanged?: () => void; // 화면을 닫지 않고 바로 바꾼 내용이 있을 때 (캘린더 옮기기)
 }) {
-  const [original] = useState<gcal.EventEdit>(() => ({
+  const [original, setOriginal] = useState<gcal.EventEdit>(() => ({
     title: ev.title,
     due: ev.date,
     time: ev.time || undefined,
@@ -2319,6 +2321,29 @@ function EventEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
+  // 일정 화면에서 캘린더 줄을 눌러 바로 다른 캘린더로 옮긴다
+  const [pickCal, setPickCal] = useState(false);
+  const moveTo = async (calId: string) => {
+    setPickCal(false);
+    const from = d.calendarId ?? gcal.calendarOf()?.id;
+    if (!from || calId === from) return;
+    setBusy(true);
+    try {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+      await gcal.moveEvent(token, ev.id, from, calId);
+      const next = { ...d, calendarId: calId };
+      setD(next);
+      setOriginal(next);
+      onSavedEdit(next);
+      onChanged?.();
+      toast(`‘${gcal.calendarOf(calId)?.name ?? "다른 캘린더"}’에 옮겼어요`);
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
     setBusy(true);
     try {
@@ -2437,14 +2462,29 @@ function EventEditor({
               {!readOnly && <span className="chev"><IconRight /></span>}
             </button>
             {cal && gcal.cachedCalendars().length > 1 && (
-              <div className="field">
-                <span className="info-label">캘린더</span>
-                <span className="grow cal-name">
-                  <span className="swatch tiny" style={{ background: cal.color }} />
-                  {cal.name}
-                  {readOnly && <span className="muted small"> · 읽기 전용</span>}
-                </span>
-              </div>
+              <>
+                <button className="field tap-field" disabled={busy} onClick={(e) => (e.stopPropagation(), !readOnly && setPickCal(!pickCal))} aria-label="캘린더 바꾸기" aria-expanded={pickCal}>
+                  <span className="info-label">캘린더</span>
+                  <span className="grow cal-name">
+                    <span className="swatch tiny" style={{ background: cal.color }} />
+                    {cal.name}
+                    {readOnly && <span className="muted small"> · 읽기 전용</span>}
+                  </span>
+                  {!readOnly && <span className={`chev${pickCal ? " open" : ""}`}><IconRight /></span>}
+                </button>
+                {pickCal && (
+                  <div className="field cal-pick">
+                    <div className="cal-chips" role="radiogroup" aria-label="캘린더">
+                      {gcal.cachedCalendars().filter((c) => c.writable).map((c) => (
+                        <button type="button" role="radio" key={c.id} aria-checked={cal.id === c.id} className={`cal-chip${cal.id === c.id ? " on" : ""}`} onClick={(e) => (e.stopPropagation(), moveTo(c.id))}>
+                          <span className="swatch tiny" style={{ background: c.color }} />
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             {d.location && (
               <div className="field">
@@ -2472,7 +2512,6 @@ function EventEditor({
           할 일에 추가
         </button>
       )}
-      <p className="muted small hint">일정 내용은 오른쪽 위 ⋯ → 수정에서 바꿀 수 있어요. 첨부 파일은 이 기기에만 보관돼요.</p>
       </>)}
     </section>
   );
@@ -2926,6 +2965,7 @@ function CalendarView(props: {
         todoId={editing.itemId && props.items.some((i) => i.id === editing.itemId) ? editing.itemId : undefined}
         onOpenTodo={props.onOpen}
         onSavedEdit={(d) => props.onEventSaved(editing, d)}
+        onChanged={load}
         chat={props.eventChats[editing.id]?.chat ?? []}
         onChat={(initial) => props.onChat(editing, initial)}
         onSaved={() => {
