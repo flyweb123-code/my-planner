@@ -376,6 +376,14 @@ function body(it: ItemLike) {
   return { ...base, start: { date: it.due }, end: { date: localDate(next) } };
 }
 
+// 비서가 캘린더에만 넣는 일정 (할 일과 이어지지 않음)
+export async function createEvent(token: string, e: EventEdit): Promise<string> {
+  const b: Partial<ReturnType<typeof body>> = { ...body({ id: "", ...e }), description: e.description };
+  delete b.extendedProperties;
+  const data = await api(token, "/calendars/primary/events", { method: "POST", body: JSON.stringify({ ...b, location: e.location }) });
+  return data.id;
+}
+
 export async function createForItem(token: string, it: ItemLike): Promise<string> {
   const data = await api(token, "/calendars/primary/events", { method: "POST", body: JSON.stringify(body(it)) });
   return data.id;
@@ -390,6 +398,14 @@ export async function updateForItem(token: string, eventId: string, it: ItemLike
   const patch: Partial<typeof b> = { ...b };
   delete patch.description;
   await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ ...patch, start, end }) });
+}
+
+// 할 일에서만 뺄 때: 일정은 그대로 두고 할 일 표시만 뗀다.
+export async function unlinkEvent(token: string, eventId: string) {
+  await api(token, `/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ extendedProperties: { private: { plannerItemId: null } } }),
+  });
 }
 
 // 캘린더에 원래 있던 일정을 할 일로 가져올 때: 새 일정을 만들지 않고 그 일정에 할 일 표시만 붙인다.

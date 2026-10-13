@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "./toast";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string };
-export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
+export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; eventId?: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
 export type Msg = {
   role: "user" | "assistant";
   text: string;

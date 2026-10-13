@@ -88,7 +88,7 @@ const suggestTool = {
 export type World = { items: Item[]; events: CalEvent[]; home: Msg[] };
 
 // 캘린더 일정은 제목뿐 아니라 기간, 장소, 설명(메모)까지 읽게 한다. 마감·준비물 같은 내용이 설명에 들어 있는 경우가 많다.
-const eventsText = (events: CalEvent[], max = 80) => {
+const eventsText = (events: CalEvent[], max = 80, ids = false) => {
   if (!events.length) return "(연결 안 됨 또는 일정 없음)";
   const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + "…" : t).replace(/\s+/g, " ").trim();
   return events
@@ -103,7 +103,7 @@ const eventsText = (events: CalEvent[], max = 80) => {
         e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
         e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(-3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, 150)}`).join(" / ") : "",
       ].filter(Boolean);
-      return `- ${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}`;
+      return `- ${ids ? `[event_id=${e.id}] ` : ""}${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}`;
     })
     .join("\n");
 };
@@ -185,6 +185,16 @@ export const ToolInputs = {
     time: z.string().optional(),
     note: z.string().optional(),
     subtasks: z.array(z.string()).optional(),
+    event_id: z.string().optional(),
+  }),
+  add_event: z.object({
+    title: z.string().min(1),
+    date: z.string(),
+    time: z.string().optional(),
+    end_time: z.string().optional(),
+    end_date: z.string().optional(),
+    location: z.string().optional(),
+    description: z.string().optional(),
   }),
   add_subtasks: z.object({ item_id: z.string(), subtasks: z.array(z.string()).min(1) }),
   update_item: z.object({
@@ -198,13 +208,13 @@ export const ToolInputs = {
 export type ToolName = keyof typeof ToolInputs;
 export type ToolRunner = (name: ToolName, input: unknown) => Promise<{ result: string; action?: Action }>;
 
-const homeTools = (): Anthropic.Tool[] => {
+const homeTools = (calendar: boolean): Anthropic.Tool[] => {
   const tools: Anthropic.Tool[] = [
     {
       name: "add_item",
       description:
-        "새 할 일을 목록에 추가한다. 사용자가 말한 일정이나 해야 할 일이 기존 할 일과 관련이 없을 때 쓴다. " +
-        "기존 할 일의 일부라면 이 도구 대신 add_subtasks를 쓴다.",
+        "새 할 일을 할 일 목록에 추가한다. 사용자가 '할 일에 넣어 줘', '할 일로 추가해 줘'처럼 할 일 목록에 넣으라고 분명히 말했을 때만 쓴다. " +
+        "그냥 일정을 말한 것이면 이 도구가 아니라 add_event를 쓴다. 기존 할 일의 일부라면 add_subtasks를 쓴다.",
       input_schema: {
         type: "object" as const,
         properties: {
@@ -213,12 +223,36 @@ const homeTools = (): Anthropic.Tool[] => {
           time: { type: "string", description: "정해진 시각이 있으면 24시간 HH:MM (예: 15:00). 없으면 생략" },
           note: { type: "string", description: "시간, 장소 같은 부가 정보. 없으면 생략" },
           subtasks: { type: "array", items: { type: "string" }, description: "처음부터 넣을 세부 업무. 사용자가 말한 것만" },
+          event_id: { type: "string", description: "이미 구글 캘린더에 있는 일정을 할 일로 넣는 것이면 그 일정의 event_id. 주면 새 일정을 만들지 않고 그 일정과 이어 둔다" },
         },
         required: ["title"],
         additionalProperties: false,
       },
       eager_input_streaming: true,
     },
+    ...(calendar
+      ? [
+          {
+            name: "add_event",
+            description: "구글 캘린더에 일정을 추가한다. 할 일 목록에는 넣지 않는다. 사용자가 약속, 일정, 마감 같은 날짜가 있는 일을 말하면 기본으로 이 도구를 쓴다.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                title: { type: "string", description: "짧은 한국어 제목" },
+                date: { type: "string", description: "시작 날짜 YYYY-MM-DD" },
+                time: { type: "string", description: "시작 시각 24시간 HH:MM. 정해진 시각이 없으면 생략(종일 일정)" },
+                end_time: { type: "string", description: "끝나는 시각 HH:MM. 말하지 않았으면 생략(1시간)" },
+                end_date: { type: "string", description: "여러 날에 걸치면 끝나는 날 YYYY-MM-DD. 아니면 생략" },
+                location: { type: "string", description: "장소. 없으면 생략" },
+                description: { type: "string", description: "준비물 같은 메모. 없으면 생략" },
+              },
+              required: ["title", "date"],
+              additionalProperties: false,
+            },
+            eager_input_streaming: true,
+          } as Anthropic.Tool,
+        ]
+      : []),
     {
       name: "add_subtasks",
       description: "사용자가 말한 일이 기존 할 일의 일부(부가 업무)일 때, 그 할 일 아래에 세부 업무로 추가한다.",
@@ -277,15 +311,17 @@ export async function homeChat(
   const c = client(s);
   const open = items.filter((i) => !i.done);
   const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}`).join("\n\n") || "(없음)";
-  const evText = eventsText(events);
+  const evText = eventsText(events, 80, true);
   const system =
     "너는 사용자의 개인 비서 '클론'이다. 메신저에서 대화하듯 자연스럽고 친근한 한국어로 짧게 답한다. 마크다운을 써도 된다.\n" +
     "사용자가 일정이나 해야 할 일을 말하면 묻지 말고 바로 도구로 정리한다:\n" +
-    "- 기존 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
-    "- 관련된 할 일이 없으면 add_item으로 새로 만든다. '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다.\n" +
-    "- 일정 변경, 완료 같은 말은 update_item을 쓴다.\n" +
-    "- 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
-    (calendar ? "- 날짜가 있는 할 일은 앱이 구글 캘린더에 자동으로 올린다. 따로 캘린더에 넣을 필요 없다.\n" : "") +
+    (calendar
+      ? "- 날짜가 있는 일정(약속, 모임, 마감 등)을 말하면 add_event로 구글 캘린더에만 넣는다. 할 일 목록에는 넣지 않는다.\n" +
+        "- 사용자가 '할 일에도 넣어 줘'처럼 할 일 목록에 넣으라고 분명히 말했을 때만 add_item을 쓴다. 그 일정이 캘린더에 이미 있거나 방금 add_event로 넣었으면 event_id를 같이 줘서 일정이 두 번 생기지 않게 한다.\n"
+      : "- 구글 캘린더가 연결돼 있지 않아 일정을 캘린더에 넣을 수 없다. 일정을 말하면 설정에서 구글 캘린더를 연결해 달라고 안내한다. 할 일에 넣어 달라고 하면 add_item을 쓴다.\n") +
+    "- 할 일 목록에 있는 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
+    "- '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다. 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
+    "- 할 일의 일정 변경, 완료 같은 말은 update_item을 쓴다.\n" +
     "도구를 쓴 뒤에는 무엇을 어디에 넣었는지 한두 문장으로 알려 준다. 그냥 질문이나 잡담이면 도구 없이 답한다. " +
     "지금 무엇을 해야 할지 물으면 일정과 캘린더를 보고 하나를 골라 준다.\n\n" +
     `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}`;
@@ -299,7 +335,7 @@ export async function homeChat(
       max_tokens: 64000,
       output_config: { effort: "low" },
       system,
-      tools: homeTools(),
+      tools: homeTools(calendar),
       tool_choice: { type: "auto" },
       messages,
     });

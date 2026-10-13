@@ -316,9 +316,9 @@ export default function App() {
   );
 
   // 캘린더에 원래 있던 일정을 할 일로 가져온다. 일정은 새로 만들지 않고 그 일정과 이어 둔다.
-  const addEventAsTodo = async (ev: CalEvent) => {
-    const existing = itemsRef.current.find((i) => i.calendarEventId === ev.id);
-    if (existing) return open(existing.id);
+  // 비서가 이번 대화에서 막 만든 일정 (목록을 새로 받아 오기 전에 할 일로 이을 때 쓴다)
+  const createdEvents = useRef(new Map<string, CalEvent>());
+  const eventToItem = (ev: CalEvent): Item => {
     const it: Item = {
       id: uid(),
       title: ev.title,
@@ -337,6 +337,12 @@ export default function App() {
     };
     it.calSynced = syncKey(it);
     files.moveOwner(ev.id, it.id).catch(() => {});
+    return it;
+  };
+  const addEventAsTodo = async (ev: CalEvent) => {
+    const existing = itemsRef.current.find((i) => i.calendarEventId === ev.id);
+    if (existing) return open(existing.id);
+    const it = eventToItem(ev);
     commit([it, ...itemsRef.current]);
     briefCache = null;
     open(it.id);
@@ -353,7 +359,19 @@ export default function App() {
   const runTool: ToolRunner = async (name, input) => {
     const all = itemsRef.current;
     if (name === "add_item") {
-      const x = input as { title: string; due?: string; time?: string; note?: string; subtasks?: string[] };
+      const x = input as { title: string; due?: string; time?: string; note?: string; subtasks?: string[]; event_id?: string };
+      // 캘린더에 이미 있는 일정을 할 일로 넣는 것이면 새 일정을 만들지 않고 그 일정과 이어 둔다
+      const ev = x.event_id ? events.find((e) => e.id === x.event_id) ?? createdEvents.current.get(x.event_id) : undefined;
+      if (x.event_id && !ev) throw new Error("그 event_id의 캘린더 일정을 찾지 못했어요.");
+      if (ev) {
+        const linked = all.find((i) => i.calendarEventId === ev.id);
+        if (linked) return { result: `이미 할 일 목록에 있음. id=${linked.id}` };
+        const it = eventToItem(ev);
+        if (x.subtasks?.length) it.subtasks = x.subtasks.map((t) => ({ id: uid(), title: t, done: false, byClaude: true, createdAt: Date.now() }));
+        commit([it, ...itemsRef.current]);
+        gcal.savedToken() && gcal.linkEvent(gcal.savedToken()!, ev.id, it.id).then(loadEvents, () => {});
+        return { result: `캘린더 일정과 이어서 할 일로 추가함. id=${it.id}`, action: { kind: "item", text: `할 일 추가: ${it.title} (캘린더 일정과 이어 둠)`, undo: { itemId: it.id } } };
+      }
       const it: Item = {
         id: uid(),
         title: x.title,
@@ -374,6 +392,20 @@ export default function App() {
           text: `할 일 추가: ${it.title}${it.due ? ` (${it.due}${it.time ? " " + it.time : ""})` : ""}${it.due && calOn ? " · 캘린더에도 올림" : ""}`,
           undo: { itemId: it.id },
         },
+      };
+    }
+    if (name === "add_event") {
+      const x = input as { title: string; date: string; time?: string; end_time?: string; end_date?: string; location?: string; description?: string };
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 설정에서 다시 연결해 주세요.");
+      const end = x.time ? (x.end_time ? { date: x.end_date ?? x.date, time: x.end_time } : addMinutes(x.date, x.time, 60)) : { date: x.end_date ?? x.date, time: undefined };
+      const d: gcal.EventEdit = { title: x.title, due: x.date, time: x.time || undefined, endDate: end.date, endTime: end.time, location: x.location ?? "", description: x.description ?? "" };
+      const id = await gcal.createEvent(token, d);
+      createdEvents.current.set(id, { id, title: d.title, date: d.due, time: d.time ?? "", endDate: d.endDate ?? d.due, endTime: d.endTime ?? "", location: d.location, description: d.description } as CalEvent);
+      loadEvents();
+      return {
+        result: `캘린더에 추가함. event_id=${id}`,
+        action: { kind: "event", text: `캘린더에 일정 추가: ${d.title} (${d.due}${d.time ? " " + d.time : ""})`, undo: { itemId: "", eventId: id } },
       };
     }
     if (name === "add_subtasks") {
@@ -437,6 +469,14 @@ export default function App() {
       markDeleted(u.itemId);
       setItems((all) => all.filter((i) => i.id !== u.itemId));
     }
+    if (a.kind === "event" && u.eventId) {
+      const eid = u.eventId;
+      (async () => {
+        const token = gcal.savedToken() ?? (await gcal.renew());
+        if (!token) return toast("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+        await gcal.deleteEvent(token, eid).then(loadEvents, (e) => toast((e as Error).message));
+      })();
+    }
     if (a.kind === "subtasks") updateItem(u.itemId, (it) => ({ ...it, subtasks: it.subtasks.filter((s) => !u.subtaskIds?.includes(s.id)) }));
     if (a.kind === "update") updateItem(u.itemId, (it) => ({ ...it, ...u.prev }));
   };
@@ -484,6 +524,20 @@ export default function App() {
               markDeleted(current.id);
               setItems((all) => all.filter((i) => i.id !== current.id));
               setView({ name: "list" });
+            }}
+            onRemoveTodoOnly={() => {
+              // 할 일에서만 뺀다. 캘린더 일정은 남기고, 나눈 대화·세부 업무·첨부 파일은 그 일정 쪽으로 옮긴다.
+              const it = current;
+              const eid = it.calendarEventId!;
+              setEventChats((m) => ({ ...m, [eid]: { ...it, id: "ev_" + eid, calendarEventId: undefined } }));
+              files.moveOwner(it.id, eid).catch(() => {});
+              setItems((all) => all.filter((i) => i.id !== it.id));
+              setView({ name: "list" });
+              toast("할 일에서 뺐어요. 캘린더 일정은 그대로 있어요");
+              (async () => {
+                const token = gcal.savedToken() ?? (await gcal.renew());
+                if (token) await gcal.unlinkEvent(token, eid).then(loadEvents, () => {});
+              })();
             }}
             onBack={() => setView({ name: "list" })}
           />
@@ -1290,6 +1344,7 @@ function ItemView(props: {
   gToken: string | null;
   update: (fn: (it: Item) => Item) => void;
   onDelete: () => void;
+  onRemoveTodoOnly: () => void;
   onBack: () => void;
   onChat: (subId?: string, initial?: string) => void;
 }) {
@@ -1338,8 +1393,11 @@ function ItemView(props: {
             <div className="popover" onClick={(e) => e.stopPropagation()}>
               <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
               <button onClick={() => (update((it) => ({ ...it, done: !it.done })), setMenu(false))}>{item.done ? "완료 취소" : "완료로 표시"}</button>
+              {item.calendarEventId && (
+                <button onClick={() => (setMenu(false), props.onRemoveTodoOnly())}>할 일에서만 빼기 (일정은 남김)</button>
+              )}
               <button className="danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))}>
-                {confirmDel ? "한 번 더 누르면 삭제" : "할 일 삭제"}
+                {confirmDel ? "한 번 더 누르면 삭제" : item.calendarEventId ? "할 일과 일정 모두 삭제" : "할 일 삭제"}
               </button>
             </div>
           )}
