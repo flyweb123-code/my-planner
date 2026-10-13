@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, uid, usePersisted } from "./store";
+import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, uid, usePersisted, wasDeletedByUser } from "./store";
+import * as backup from "./backup";
 import type { Action, Item, Msg, Settings } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
@@ -18,6 +19,8 @@ export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
   // 고정한 할 일을 잠금 화면 위젯용 저장소에 올린다.
   useEffect(() => widget.syncPins(items), [items]);
+  // 할 일 목록이 바뀔 때마다 이 기기에 자동 백업을 남긴다 (설정 → 데이터 백업에서 되살리기)
+  useEffect(() => void backup.save(items), [items]);
   const [settings, setSettings] = usePersisted<Settings>("settings", DEFAULT_SETTINGS);
   // 홈 대화: 여러 채팅으로 나눠 저장한다. 앱을 열면 항상 새 채팅으로 시작한다.
   const [threads, setThreads] = usePersisted<HomeThread[]>("homeChats", []);
@@ -251,10 +254,13 @@ export default function App() {
   const inFlight = useRef(new Set<string>());
   useEffect(() => {
     const ids = new Set(items.map((i) => i.id));
-    for (const p of syncPrev.current) if (!ids.has(p.id) && p.calendarEventId) toDelete.current.push(p.calendarEventId);
+    // 사용자가 직접 지운 할 일만 캘린더 일정도 지운다. 다른 이유로 목록에서 빠졌으면 일정은 남겨 둔다.
+    for (const p of syncPrev.current) if (!ids.has(p.id) && p.calendarEventId && wasDeletedByUser(p.id)) toDelete.current.push(p.calendarEventId);
     syncPrev.current = items;
     if (!gToken) return;
     const timer = setTimeout(async () => {
+      // 앱이 두 군데 열려 있을 때 같은 일정을 두 번 만들지 않도록, 보이는 쪽에서만 반영한다.
+      if (document.hidden) return;
       const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) return setGToken(null);
       let changed = false;
@@ -427,7 +433,10 @@ export default function App() {
   const undo = (a: Action) => {
     const u = a.undo;
     if (!u) return;
-    if (a.kind === "item") setItems((all) => all.filter((i) => i.id !== u.itemId));
+    if (a.kind === "item") {
+      markDeleted(u.itemId);
+      setItems((all) => all.filter((i) => i.id !== u.itemId));
+    }
     if (a.kind === "subtasks") updateItem(u.itemId, (it) => ({ ...it, subtasks: it.subtasks.filter((s) => !u.subtaskIds?.includes(s.id)) }));
     if (a.kind === "update") updateItem(u.itemId, (it) => ({ ...it, ...u.prev }));
   };
@@ -472,6 +481,7 @@ export default function App() {
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
               files.removeOwner(current.id).catch(() => {});
+              markDeleted(current.id);
               setItems((all) => all.filter((i) => i.id !== current.id));
               setView({ name: "list" });
             }}
@@ -519,7 +529,7 @@ export default function App() {
           />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
         )}
       </main>
       <PullToRefresh />
@@ -874,6 +884,7 @@ function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: I
 
   const remove = (id: string) => {
     files.removeOwner(id).catch(() => {});
+    markDeleted(id);
     setItems((a) => a.filter((x) => x.id !== id));
     toast("할 일을 삭제했어요");
   };
@@ -1697,6 +1708,7 @@ function SettingsView(props: {
   eventsCount: number;
   pinnedCount: number;
   items: Item[];
+  setItems: (fn: (a: Item[]) => Item[]) => void;
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
@@ -1756,7 +1768,7 @@ function SettingsView(props: {
       {page === "claude" && <ClaudeSettings settings={settings} setSettings={props.setSettings} />}
       {page === "calendar" && <CalendarSettings {...props} />}
       {page === "widget" && <WidgetSettings items={props.items} onGoCalendar={() => setPage("calendar")} />}
-      {page === "data" && <DataSettings />}
+      {page === "data" && <DataSettings items={props.items} setItems={props.setItems} />}
     </section>
   );
 }
@@ -1981,8 +1993,42 @@ function WidgetSettings({ items, onGoCalendar }: { items: Item[]; onGoCalendar: 
   );
 }
 
-function DataSettings() {
+function DataSettings({ items, setItems }: { items: Item[]; setItems: (fn: (a: Item[]) => Item[]) => void }) {
+  const [lost, setLost] = useState<(Item & { seenAt: number })[] | null>(null);
+  useEffect(() => {
+    backup.missing(items).then(setLost, () => setLost([]));
+  }, [items]);
+  const restore = (it: Item & { seenAt: number }) => {
+    const { seenAt: _, ...item } = it;
+    void _;
+    // 캘린더 일정이 지워졌을 수 있으니 다시 만들도록 연결 표시는 지운다
+    setItems((a) => (a.some((x) => x.id === item.id) ? a : [{ ...item, calendarEventId: undefined, calSynced: "", updatedAt: Date.now() }, ...a]));
+    toast(`'${item.title}' 할 일을 되살렸어요`);
+  };
+  const when = (t: number) => new Date(t).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
   return (
+    <>
+    <div className="panel">
+      <strong>목록에서 빠진 할 일</strong>
+      <p className="muted small">이 기기에 자동으로 남겨 둔 백업에 있는데 지금 목록에는 없는 할 일이에요. 직접 지운 할 일도 여기 보여요.</p>
+      {lost === null ? (
+        <p className="muted small">찾는 중…</p>
+      ) : lost.length === 0 ? (
+        <p className="muted small">빠진 할 일이 없어요.</p>
+      ) : (
+        <ul className="restore-list">
+          {lost.map((it) => (
+            <li key={it.id}>
+              <span className="grow">
+                <strong>{it.title}</strong>
+                <span className="muted small">{[it.due && dueLabel(it.due), `${when(it.seenAt)}까지 있었음`].filter(Boolean).join(" · ")}</span>
+              </span>
+              <button className="secondary" onClick={() => restore(it)}>되살리기</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
     <div className="panel">
       <p className="muted small">지금은 할 일이 이 기기의 브라우저에만 저장돼요. 기기를 바꾸거나 다른 기기로 옮길 때 백업을 쓰세요.</p>
       <div className="row">
@@ -2019,6 +2065,7 @@ function DataSettings() {
         </label>
       </div>
     </div>
+    </>
   );
 }
 
@@ -2435,7 +2482,7 @@ function CalendarView(props: {
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
+    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.itemId && props.items.some((i) => i.id === e.itemId) ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
       <span className="ev-bar" />
       <span className="ev-time">
         {e.time ? e.time : "종일"}

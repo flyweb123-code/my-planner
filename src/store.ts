@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toast } from "./toast";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string };
 export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
@@ -49,14 +50,47 @@ export function usePersisted<T>(key: string, fallback: T) {
     Array.isArray(fallback) ? (loadArray(key) as T) : load(key, fallback),
   );
   useEffect(() => {
+    const json = JSON.stringify(value);
+    if (localStorage.getItem(key) === json) return;
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(key, json);
     } catch {
-      /* 저장 공간이 없을 때는 조용히 넘어감 */
+      // 저장 공간이 꽉 찼으면 다시 받을 수 있는 캘린더 임시 저장본을 비우고 한 번 더 저장한다.
+      try {
+        localStorage.removeItem("gcal_cache");
+        localStorage.setItem(key, json);
+      } catch {
+        if (!warned) toast("저장 공간이 부족해서 이 기기에 저장하지 못했어요. 설정 → 데이터 백업에서 백업을 내려받아 주세요.");
+        warned = true;
+      }
     }
   }, [key, value]);
+  // 같은 기기에서 앱이 두 군데(홈 화면 앱과 사파리 탭 등) 열려 있으면, 다른 쪽에서 바꾼 내용을 받아 온다.
+  // 이렇게 하지 않으면 예전 목록을 들고 있던 쪽이 저장하면서 새로 추가한 할 일을 덮어쓴다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== key || e.newValue === null) return;
+      try {
+        const next = JSON.parse(e.newValue);
+        if (Array.isArray(fallback) !== Array.isArray(next)) return;
+        setValue(Array.isArray(next) ? next : { ...fallback, ...next });
+      } catch {
+        /* 무시 */
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   return [value, setValue] as const;
 }
+let warned = false;
+
+// 사용자가 직접 지운 할 일. 이렇게 지운 할 일만 구글 캘린더 일정도 같이 지운다.
+// (다른 이유로 목록에서 빠진 할 일 때문에 캘린더 일정까지 사라지지 않게)
+const deletedByUser = new Set<string>();
+export const markDeleted = (id: string) => void deletedByUser.add(id);
+export const wasDeletedByUser = (id: string) => deletedByUser.delete(id);
 
 function loadArray(key: string): unknown[] {
   try {
