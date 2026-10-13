@@ -481,6 +481,25 @@ export default function App() {
     if (a.kind === "update") updateItem(u.itemId, (it) => ({ ...it, ...u.prev }));
   };
 
+  // 할 일을 지운다. 캘린더 일정은 지우지 않고 남겨 두며(할 일 표시만 뗌), 나눈 대화·세부 업무·첨부 파일은 그 일정 쪽으로 옮긴다.
+  const removeTodo = (id: string) => {
+    const it = itemsRef.current.find((i) => i.id === id);
+    if (!it) return;
+    const eid = it.calendarEventId;
+    setItems((all) => all.filter((i) => i.id !== id));
+    if (!eid) {
+      files.removeOwner(id).catch(() => {});
+      return toast("할 일을 삭제했어요");
+    }
+    setEventChats((m) => ({ ...m, [eid]: { ...it, id: "ev_" + eid, calendarEventId: undefined } }));
+    files.moveOwner(id, eid).catch(() => {});
+    toast("할 일에서 뺐어요. 캘린더 일정은 그대로 있어요");
+    (async () => {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (token) await gcal.unlinkEvent(token, eid).then(loadEvents, () => {});
+    })();
+  };
+
   const open = (id: string) => id && setView({ name: "item", id });
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
@@ -513,7 +532,7 @@ export default function App() {
             onGoSettings={() => setView({ name: "settings" })}
           />
         )}
-        {view.name === "list" && <List items={items} setItems={setItems} onOpen={open} />}
+        {view.name === "list" && <List items={items} setItems={setItems} onOpen={open} onRemove={removeTodo} />}
         {view.name === "item" && current && (
           <ItemView
             item={current}
@@ -521,24 +540,8 @@ export default function App() {
             onChat={(sub, initial) => setView({ name: "chat", id: current.id, sub, initial })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
-              files.removeOwner(current.id).catch(() => {});
-              markDeleted(current.id);
-              setItems((all) => all.filter((i) => i.id !== current.id));
+              removeTodo(current.id);
               setView({ name: "list" });
-            }}
-            onRemoveTodoOnly={() => {
-              // 할 일에서만 뺀다. 캘린더 일정은 남기고, 나눈 대화·세부 업무·첨부 파일은 그 일정 쪽으로 옮긴다.
-              const it = current;
-              const eid = it.calendarEventId!;
-              setEventChats((m) => ({ ...m, [eid]: { ...it, id: "ev_" + eid, calendarEventId: undefined } }));
-              files.moveOwner(it.id, eid).catch(() => {});
-              setItems((all) => all.filter((i) => i.id !== it.id));
-              setView({ name: "list" });
-              toast("할 일에서 뺐어요. 캘린더 일정은 그대로 있어요");
-              (async () => {
-                const token = gcal.savedToken() ?? (await gcal.renew());
-                if (token) await gcal.unlinkEvent(token, eid).then(loadEvents, () => {});
-              })();
             }}
             onBack={() => setView({ name: "list" })}
           />
@@ -940,19 +943,14 @@ function ChatDrawer(props: {
 
 /* ---------------- 할 일 목록 ---------------- */
 
-function List({ items, setItems, onOpen }: { items: Item[]; setItems: (fn: (a: Item[]) => Item[]) => void; onOpen: (id: string) => void }) {
+function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: (fn: (a: Item[]) => Item[]) => void; onOpen: (id: string) => void; onRemove: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
   const [showDone, setShowDone] = useState(false);
   const [adding, setAdding] = useState(false);
   const [swiped, setSwiped] = useState<string | null>(null);
 
-  const remove = (id: string) => {
-    files.removeOwner(id).catch(() => {});
-    markDeleted(id);
-    setItems((a) => a.filter((x) => x.id !== id));
-    toast("할 일을 삭제했어요");
-  };
+  const remove = onRemove;
   const toggleDone = (id: string) => setItems((a) => a.map((x) => (x.id === id ? { ...x, done: !x.done, updatedAt: Date.now() } : x)));
   const togglePin = (id: string) => {
     const it = items.find((x) => x.id === id);
@@ -1346,7 +1344,6 @@ function ItemView(props: {
   gToken: string | null;
   update: (fn: (it: Item) => Item) => void;
   onDelete: () => void;
-  onRemoveTodoOnly: () => void;
   onBack: () => void;
   onChat: (subId?: string, initial?: string) => void;
 }) {
@@ -1395,11 +1392,8 @@ function ItemView(props: {
             <div className="popover" onClick={(e) => e.stopPropagation()}>
               <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
               <button onClick={() => (update((it) => ({ ...it, done: !it.done })), setMenu(false))}>{item.done ? "완료 취소" : "완료로 표시"}</button>
-              {item.calendarEventId && (
-                <button onClick={() => (setMenu(false), props.onRemoveTodoOnly())}>할 일에서만 빼기 (일정은 남김)</button>
-              )}
               <button className="danger" onClick={() => (confirmDel ? props.onDelete() : setConfirmDel(true))}>
-                {confirmDel ? "한 번 더 누르면 삭제" : item.calendarEventId ? "할 일과 일정 모두 삭제" : "할 일 삭제"}
+                {confirmDel ? "한 번 더 누르면 삭제" : "할 일 삭제"}
               </button>
             </div>
           )}
