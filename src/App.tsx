@@ -6,6 +6,7 @@ import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing,
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
+import { holidayName } from "./holidays";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
@@ -2339,21 +2340,21 @@ function EventEditor({
     setPickCal(false);
     const from = d.calendarId ?? gcal.calendarOf()?.id;
     if (!from || calId === from) return;
-    setBusy(true);
+    // 화면은 바로 바꾸고 구글에는 뒤에서 옮긴다. 실패하면 되돌린다.
+    const prev = d;
+    const next = { ...d, calendarId: calId };
+    setD(next);
+    setOriginal(next);
     try {
       const token = gcal.savedToken() ?? (await gcal.renew());
       if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
       await gcal.moveEvent(token, ev.id, from, calId, ev.itemId ?? todoId);
-      const next = { ...d, calendarId: calId };
-      setD(next);
-      setOriginal(next);
       onSavedEdit(next);
       onChanged?.();
-      toast(`‘${gcal.calendarOf(calId)?.name ?? "다른 캘린더"}’에 옮겼어요`);
     } catch (e) {
-      toast((e as Error).message);
-    } finally {
-      setBusy(false);
+      setD(prev);
+      setOriginal(prev);
+      toast(`캘린더를 옮기지 못했어요: ${(e as Error).message}`);
     }
   };
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
@@ -2940,7 +2941,9 @@ function CalendarView(props: {
   const dayLabel = (d: string) => {
     const w = new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" });
     const tomorrow = ymd(new Date(Date.now() + 86400000));
-    return d === today ? `오늘 · ${w}` : d === tomorrow ? `내일 · ${w}` : w;
+    const h = holidayName(d);
+    const label = h ? `${w} · ${h}` : w;
+    return d === today ? `오늘 · ${label}` : d === tomorrow ? `내일 · ${label}` : label;
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
@@ -3092,7 +3095,8 @@ function CalendarView(props: {
               return (
                 <button
                   key={k}
-                  className={`cell ${out ? "out" : ""} ${k === selected ? "sel" : ""} ${k === today ? "today" : ""} ${d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""}`}
+                  className={`cell ${out ? "out" : ""} ${k === selected ? "sel" : ""} ${k === today ? "today" : ""} ${d.getDay() === 0 || holidayName(k) ? "sun" : d.getDay() === 6 ? "sat" : ""}`}
+                  title={holidayName(k)}
                   onClick={() => {
                     if (swiped.current) return void (swiped.current = false);
                     setSelected(k);
