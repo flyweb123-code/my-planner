@@ -54,7 +54,8 @@ export default function App() {
     .sort((a, b) => a.ts - b.ts)
     .slice(-6);
   const [view, setView] = useState<View>({ name: "home" });
-  const [events, setEvents] = useState<CalEvent[]>([]);
+  // 지난번에 받아 둔 일정을 먼저 보여 주고, 구글에서 새로 받아 오면 바꾼다.
+  const [events, setEvents] = useState<CalEvent[]>(() => (gcal.wasLinked() ? (gcal.cachedUpcoming(60) ?? []) : []));
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
@@ -205,7 +206,8 @@ export default function App() {
   }, []);
 
   const loadEvents = useCallback(() => {
-    if (!gToken) return setEvents([]);
+    // 권한을 새로 받는 중일 때는 저장해 둔 일정을 그대로 둔다. (연결을 끊으면 disconnectCalendar가 비운다)
+    if (!gToken) return;
     gcal
       .upcoming(gToken, 60)
       .then(setEvents)
@@ -229,6 +231,7 @@ export default function App() {
     gcal.signOut();
     setGToken(null);
     setLinked(false);
+    setEvents([]);
   };
 
   // 날짜가 있는 할 일은 구글 캘린더에 자동으로 올리고, 바뀌면 고치고, 지우면 같이 지운다.
@@ -2020,6 +2023,18 @@ const ymd = (d: Date) => d.toLocaleDateString("sv-SE");
 const syncKey = (it: Item) => (it.due ? `${it.title}|${it.due}|${it.time ?? ""}|${it.endDate ?? ""}|${it.endTime ?? ""}` : "");
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
 
+// 달력에 보이는 6주(앞뒤 달 일부 포함) 칸
+function monthCells(month: Date): Date[] {
+  const gridStart = new Date(month);
+  gridStart.setDate(1 - month.getDay());
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    return d;
+  });
+}
+const monthRangeEnd = (cells: Date[]) => new Date(cells[41].getTime() + 86400000);
+
 function CalendarView(props: {
   items: Item[];
   gToken: string | null;
@@ -2043,7 +2058,6 @@ function CalendarView(props: {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [selected, setSelected] = useState(today);
-  const [events, setEvents] = useState<CalEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<CalEvent | null>(null);
 
@@ -2055,26 +2069,41 @@ function CalendarView(props: {
     }
   }, [mode]);
 
-  // 달력에 보이는 6주(앞뒤 달 일부 포함) 범위
-  const gridStart = new Date(month);
-  gridStart.setDate(1 - month.getDay());
-  const cells = Array.from({ length: 42 }, (_, i) => {
-    const d = new Date(gridStart);
-    d.setDate(gridStart.getDate() + i);
-    return d;
-  });
+  const cells = monthCells(month);
   const rangeFrom = mode === "month" ? cells[0] : new Date(new Date().setHours(0, 0, 0, 0));
-  const rangeTo = mode === "month" ? new Date(cells[41].getTime() + 86400000) : new Date(rangeFrom.getTime() + 30 * 86400000);
+  const rangeTo = mode === "month" ? monthRangeEnd(cells) : new Date(rangeFrom.getTime() + 30 * 86400000);
   const rangeKey = `${ymd(rangeFrom)}~${ymd(rangeTo)}`;
 
+  // 이 기기에 저장해 둔 일정을 바로 보여 주고, 구글에서 새로 받아 오면 바꾼다.
+  // (예전에는 탭을 열 때마다 빈 달력으로 시작해서 받아 올 때까지 일정이 안 보였다.)
+  const fromCache = () => gcal.cached(rangeFrom, rangeTo) ?? [];
+  const [shown, setShown] = useState(() => ({ key: rangeKey, events: fromCache() }));
+  // 달을 넘기면 그 달의 저장본으로 즉시 바꾼다 (그리는 중에 바로 바꿔서 빈 화면이 한 번도 안 보이게).
+  if (shown.key !== rangeKey) setShown({ key: rangeKey, events: fromCache() });
+  const events = shown.events;
+
+  const latest = useRef(rangeKey);
+  latest.current = rangeKey;
   const load = useCallback(() => {
-    if (!props.gToken) return setEvents([]);
+    if (!props.gToken) return;
+    const key = rangeKey;
+    const token = props.gToken;
     setLoading(true);
     gcal
-      .range(props.gToken, rangeFrom, rangeTo)
-      .then(setEvents)
+      .range(token, rangeFrom, rangeTo)
+      .then((evs) => {
+        // 받아 오는 사이에 다른 달로 넘어갔으면 이 결과는 저장만 하고 화면에는 안 쓴다.
+        if (latest.current === key) setShown({ key, events: evs });
+      })
       .catch((e) => toast((e as Error).message))
-      .finally(() => setLoading(false));
+      .finally(() => latest.current === key && setLoading(false));
+    // 앞뒤 달도 미리 받아 둬서 달을 넘길 때 바로 보이게 한다.
+    if (mode === "month")
+      for (const n of [-1, 1]) {
+        const c = monthCells(new Date(month.getFullYear(), month.getMonth() + n, 1));
+        const to = monthRangeEnd(c);
+        if (!gcal.isFresh(c[0], to, 5 * 60_000)) gcal.range(token, c[0], to).catch(() => {});
+      }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.gToken, rangeKey]);
   useEffect(load, [load]);
