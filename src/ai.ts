@@ -105,11 +105,11 @@ const eventsText = (events: CalEvent[], max = 80, ids = false, full = false) => 
         })(),
         e.location ? `장소: ${clip(e.location, 80)}` : "",
         e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
-        e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(full ? -20 : -3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 500 : 150)}`).join(" / ") : "",
+        e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(full ? -6 : -3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 200 : 150)}`).join(" / ") : "",
       ].filter(Boolean);
       // 일정 대화에서 나온 세부 업무와 그 기록
       const subs = (e.subtasks ?? []).map((x) => {
-        const talk = x.chat?.length ? `\n        대화: ` + x.chat.slice(full ? -20 : -2).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 500 : 150)}`).join(" / ") : "";
+        const talk = x.chat?.length ? `\n        대화: ` + x.chat.slice(full ? -4 : -2).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 200 : 150)}`).join(" / ") : "";
         return `      - [${x.done ? "x" : " "}] ${x.title}${x.note ? ` (메모: ${clip(x.note, 300)})` : ""}${talk}`;
       });
       return `- ${ids ? `[event_id=${e.id}] ` : ""}${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}${subs.length ? "\n    세부 업무:\n" + subs.join("\n") : ""}`;
@@ -372,7 +372,8 @@ export async function homeChat(
           {
             type: "text" as const,
             text: `## 이전 채팅 기록\n아래는 사용자와 다른 채팅에서 나눈 대화다(최근 것부터). 지금 채팅과 이어진 하나의 기억으로 여기고, 사용자가 전에 말한 내용·정한 것·취향을 기억해서 답한다. "전에 말했잖아" 같은 말에는 여기서 찾아 답한다.\n\n${memory}`,
-            cache_control: { type: "ephemeral" as const },
+            // 대화 사이가 몇 분씩 떠도 다시 쓰도록 1시간 동안 캐시
+            cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
           },
         ]
       : []),
@@ -435,23 +436,27 @@ export async function checkKey(s: Settings): Promise<string> {
 /* ---------------- 홈 첫 화면 제안: 지금 할 일, 놓친 것, 확인할 것 ---------------- */
 
 const Briefing = z.object({
-  now: z.object({ text: z.string().describe("지금 바로 하면 좋은 한 가지와 짧은 이유. 한 문장"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
-  missed: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일, 오래 손대지 않은 일. 없으면 빈 배열. 최대 3개"),
-  check: z.array(z.object({ text: z.string(), item_id: z.string() })).describe("확인할 것: 다가오는 일정 준비, 날짜가 없어 정해야 할 일, 진행 상황 업데이트가 필요한 일. 최대 3개"),
+  now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 이유 없이 25자 안팎의 짧은 한 줄 (예: '드레스 투어 스타일 사진 모으기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
+  missed: z.array(z.object({ text: z.string().describe("20자 안팎 한 줄"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
+  check: z.array(z.object({ text: z.string().describe("20자 안팎 한 줄"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
 });
 export type Briefing = z.infer<typeof Briefing>;
+
+const BRIEF_MODEL = "claude-haiku-5-5";
 
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
   const itemsText =
-    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 20, maxLen: 500 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
-  const evText = eventsText(events, 60, false, true);
+    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 6, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
+  const evText = eventsText(events, 40, false, true);
   const res = await client(s).messages.parse({
-    model: s.model,
-    max_tokens: 16000,
+    // 첫 화면 브리핑은 자주 만들어지고 짧은 정리라서 빠르고 저렴한 모델로 만든다
+    model: BRIEF_MODEL,
+    max_tokens: 2000,
     output_config: { effort: "low", format: zodOutputFormat(Briefing) },
     system:
-      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 짧은 제안을 만든다. " +
+      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 아주 짧은 제안을 만든다. " +
+      "한눈에 보이게 각 줄은 이유나 설명 없이 20자 안팎의 짧은 한 줄로 쓴다. 꼭 필요한 것만 넣고, 애매하면 빼서 빈 배열로 둔다. " +
       "지금 시각을 꼭 고려한다(새벽이면 쉬라고 하거나 아침에 할 일을 알려 주는 식). 각 문장은 짧고 친근한 한국어로. " +
       "할 일 목록뿐 아니라 구글 캘린더 일정도 함께 보고 추천한다. 캘린더 일정의 설명에 적힌 마감, 준비할 것도 읽고, " +
       "곧 다가오는 일정(마감, 약속, 제출일)은 미리 준비할 것을 '확인할 것'이나 '지금'에 넣는다. 오늘 있는 일정은 시간에 맞춰 알려 준다. " +

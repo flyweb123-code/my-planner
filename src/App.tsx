@@ -752,7 +752,12 @@ function HomeChat(props: {
     items.map((i) => `${i.id}:${i.updatedAt}`).join(",");
   useEffect(() => {
     if (!settings.apiKey) return setBrief(simpleBriefing(items, events));
-    if (briefCache && briefCache.evKey === evKey && Date.now() - briefCache.at < 30 * 60000) return;
+    // 같은 내용이면 30분 동안, 내용이 바뀌었어도 마지막으로 만든 지 5분이 안 됐으면 다시 만들지 않는다 (API 아끼기)
+    if (briefCache) {
+      const age = Date.now() - briefCache.at;
+      if (age < (briefCache.evKey === evKey ? 30 : 5) * 60000) return;
+    }
+    if (document.hidden) return;
     let alive = true;
     makeBriefing(settings, items, events)
       .then((b) => {
