@@ -86,3 +86,18 @@ export const IconPin = ({ on }: { on?: boolean }) => (
     <path d="M12 14v6.5" />
   </svg>
 );
+export const IconTrash = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5" />
+  </svg>
+);
+export const IconClip = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6" />
+  </svg>
+);
+export const IconClose = () => (
+  <svg {...base} strokeWidth={2} aria-hidden="true">
+    <path d="M6 6l12 12M18 6 6 18" />
+  </svg>
+);

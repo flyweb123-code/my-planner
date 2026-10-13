@@ -2,7 +2,7 @@
 // 권한은 1시간짜리다. 연결 유지 서버(server/worker.js)를 설정하면 그 서버가 대신
 // 새 권한을 받아 와서 계속 연결된 채로 있고, 없으면 만료될 때 버튼 한 번으로 다시 받는다.
 import { GOOGLE_CLIENT_ID } from "./config";
-import { itemEnd } from "./store";
+import { itemEnd, type Msg } from "./store";
 
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type TokenClient = { requestAccessToken: (o?: { prompt?: string }) => void };
@@ -221,7 +221,25 @@ export type CalEvent = {
   location: string;
   description: string;
   itemId?: string; // 이 앱의 할 일에서 만든 일정이면 그 할 일 id
+  colorId?: string; // 구글 캘린더 일정 색 번호("1"~"11"). 없으면 캘린더 기본 색
+  chat?: Msg[]; // 이 일정에 대해 클론과 나눈 대화 (앱에만 저장)
 };
+
+// 구글 캘린더 일정 색(colorId)과 구글 앱에서 보이는 이름·색
+export const EVENT_COLORS: { id: string; name: string; hex: string }[] = [
+  { id: "11", name: "토마토", hex: "#d50000" },
+  { id: "4", name: "플라밍고", hex: "#e67c73" },
+  { id: "6", name: "귤", hex: "#f4511e" },
+  { id: "5", name: "바나나", hex: "#f6bf26" },
+  { id: "2", name: "세이지", hex: "#33b679" },
+  { id: "10", name: "바질", hex: "#0b8043" },
+  { id: "7", name: "공작", hex: "#039be5" },
+  { id: "9", name: "블루베리", hex: "#3f51b5" },
+  { id: "1", name: "라벤더", hex: "#7986cb" },
+  { id: "3", name: "포도", hex: "#8e24aa" },
+  { id: "8", name: "흑연", hex: "#616161" },
+];
+export const colorHex = (id?: string) => EVENT_COLORS.find((c) => c.id === id)?.hex;
 
 export async function upcoming(token: string, days = 30): Promise<CalEvent[]> {
   const today = new Date();
@@ -299,7 +317,7 @@ async function fetchRange(token: string, from: Date, to: Date): Promise<CalEvent
     maxResults: "250",
   });
   const data = await api(token, `/calendars/primary/events?${q}`);
-  type Raw = { id: string; summary?: string; location?: string; description?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string }; extendedProperties?: { private?: { plannerItemId?: string } } };
+  type Raw = { id: string; summary?: string; location?: string; description?: string; start: { dateTime?: string; date?: string }; end: { dateTime?: string; date?: string }; extendedProperties?: { private?: { plannerItemId?: string } }; colorId?: string };
   const hm = (iso: string) => new Date(iso).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
   return (data.items ?? []).map((e: Raw) => ({
     id: e.id,
@@ -311,6 +329,7 @@ async function fetchRange(token: string, from: Date, to: Date): Promise<CalEvent
     location: e.location ?? "",
     description: e.description ?? "",
     itemId: e.extendedProperties?.private?.plannerItemId,
+    colorId: e.colorId,
   }));
 }
 
@@ -321,7 +340,7 @@ function prevDay(d: string) {
   return localDate(x);
 }
 
-export type EventEdit = { title: string; due: string; time?: string; endDate?: string; endTime?: string; location: string; description: string };
+export type EventEdit = { title: string; due: string; time?: string; endDate?: string; endTime?: string; location: string; description: string; colorId?: string };
 
 // 캘린더 탭에서 구글 일정을 직접 고친다 (구글 캘린더 편집 화면과 같은 항목).
 export async function updateEvent(token: string, eventId: string, e: EventEdit) {
@@ -330,7 +349,8 @@ export async function updateEvent(token: string, eventId: string, e: EventEdit) 
   const end = "date" in b.end ? { date: b.end.date, dateTime: null } : { ...b.end, date: null };
   await api(token, `/calendars/primary/events/${eventId}`, {
     method: "PATCH",
-    body: JSON.stringify({ summary: e.title || "(제목 없음)", location: e.location, description: e.description, start, end }),
+    // colorId를 null로 보내면 캘린더 기본 색으로 돌아간다
+    body: JSON.stringify({ summary: e.title || "(제목 없음)", location: e.location, description: e.description, colorId: e.colorId ?? null, start, end }),
   });
 }
 

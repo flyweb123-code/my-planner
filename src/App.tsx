@@ -8,10 +8,11 @@ import * as gcal from "./gcal";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose } from "./icons";
+import * as files from "./files";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; initial?: string } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -56,6 +57,15 @@ export default function App() {
   const [view, setView] = useState<View>({ name: "home" });
   // 지난번에 받아 둔 일정을 먼저 보여 주고, 구글에서 새로 받아 오면 바꾼다.
   const [events, setEvents] = useState<CalEvent[]>(() => (gcal.wasLinked() ? (gcal.cachedUpcoming(60) ?? []) : []));
+  // 캘린더 일정마다 클론과 나눈 대화 (구글 일정 id → 대화용 항목). 할 일 목록과는 따로 둔다.
+  const [eventChats, setEventChats] = usePersisted<Record<string, Item>>("eventChats", {});
+  // 클론이 보는 일정에는 일정별 대화도 붙여서 넘긴다
+  // 일정 대화에서 돌아오면 그 일정 편집 화면을 다시 연다
+  const [reopenEvent, setReopenEvent] = useState<CalEvent | null>(null);
+  useEffect(() => {
+    if (view.name === "calendar" && reopenEvent) setReopenEvent(null);
+  }, [view.name, reopenEvent]);
+  const aiEvents = events.map((e) => (eventChats[e.id]?.chat.length ? { ...e, chat: eventChats[e.id].chat } : e));
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
@@ -314,8 +324,8 @@ export default function App() {
       done: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      subtasks: [],
-      chat: [],
+      subtasks: eventChats[ev.id]?.subtasks ?? [],
+      chat: eventChats[ev.id]?.chat ?? [],
       calendarEventId: ev.id,
     };
     it.calSynced = syncKey(it);
@@ -424,14 +434,14 @@ export default function App() {
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
   // 대화 화면이 떠 있는 동안에는 뒤쪽 문서가 스크롤되지 않게 잠근다.
-  const chatScreen = view.name === "home" || view.name === "chat";
+  const chatScreen = view.name === "home" || view.name === "chat" || view.name === "evchat";
   useEffect(() => {
     document.documentElement.classList.toggle("chat-lock", chatScreen);
     if (chatScreen) window.scrollTo(0, 0);
   }, [chatScreen]);
 
   return (
-    <div className={`app ${view.name === "chat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
+    <div className={`app ${view.name === "chat" || view.name === "evchat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
       <main>
         {view.name === "home" && (
           <HomeChat
@@ -439,7 +449,7 @@ export default function App() {
             onMenu={() => setDrawer(true)}
             onNewChat={() => setActiveId(uid())}
             items={items}
-            events={events}
+            events={aiEvents}
             settings={settings}
             calOn={calOn}
             calExpired={calExpired}
@@ -466,10 +476,36 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} world={{ items, events, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
-          <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onAddTodo={addEventAsTodo} onGoSettings={() => setView({ name: "settings" })} />
+          <CalendarView
+            items={items}
+            gToken={gToken}
+            calOn={calOn}
+            linked={linked}
+            eventChats={eventChats}
+            reopen={reopenEvent}
+            onConnect={connectCalendar}
+            onOpen={open}
+            onAddTodo={addEventAsTodo}
+            onChat={(ev, initial) => setView({ name: "evchat", ev, initial })}
+            onGoSettings={() => setView({ name: "settings" })}
+          />
+        )}
+        {view.name === "evchat" && (
+          <ChatView
+            key={view.ev.id}
+            world={{ items, events: aiEvents, home: recentHome }}
+            item={eventChatItem(view.ev, eventChats[view.ev.id])}
+            initial={view.initial}
+            settings={settings}
+            update={(fn) => setEventChats((m) => ({ ...m, [view.ev.id]: fn(eventChatItem(view.ev, m[view.ev.id])) }))}
+            onBack={() => {
+              setReopenEvent(view.ev);
+              setView({ name: "calendar" });
+            }}
+          />
         )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
@@ -498,7 +534,7 @@ export default function App() {
           onClose={() => setDrawer(false)}
         />
       )}
-      {view.name !== "chat" && (
+      {view.name !== "chat" && view.name !== "evchat" && (
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
             <IconChat />
@@ -1951,10 +1987,53 @@ function DataSettings() {
 
 /* ---------------- 캘린더 ---------------- */
 
-type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent };
+// 캘린더 일정 하나를 클론과 대화할 수 있는 항목 모양으로 만든다. 제목·시간은 항상 구글 일정 기준.
+function eventChatItem(ev: CalEvent, saved?: Item): Item {
+  const note = ["[구글 캘린더 일정]", ev.location && `장소: ${ev.location}`, ev.description && ev.description !== "클론 앱에서 추가한 할 일" ? ev.description : ""].filter(Boolean).join("\n");
+  return {
+    id: "ev_" + ev.id,
+    title: ev.title,
+    note,
+    due: ev.date,
+    time: ev.time || undefined,
+    endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : undefined,
+    endTime: ev.time && ev.endTime ? ev.endTime : undefined,
+    done: false,
+    createdAt: saved?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    subtasks: saved?.subtasks ?? [],
+    chat: saved?.chat ?? [],
+    calendarEventId: ev.id,
+  };
+}
+
+type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
+// 구글에서 색을 정한 일정은 그 색으로 칠한다
+const evColor = (e: DayEntry) => (e.color ? ({ "--ev": e.color } as React.CSSProperties) : undefined);
 
 /* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
-function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClose: () => void; onSaved: () => void; onAddTodo: () => void }) {
+function EventEditor({
+  ev,
+  chat,
+  onClose,
+  onSaved,
+  onAddTodo,
+  onChat,
+}: {
+  ev: CalEvent;
+  chat: Msg[];
+  onClose: () => void;
+  onSaved: () => void;
+  onAddTodo: () => void;
+  onChat: (initial?: string) => void;
+}) {
+  const [ask, setAsk] = useState("");
+  const last = chat[chat.length - 1];
+  const startAsk = () => {
+    if (!ask.trim()) return;
+    onChat(ask.trim());
+    setAsk("");
+  };
   const [d, setD] = useState<gcal.EventEdit>({
     title: ev.title,
     due: ev.date,
@@ -1963,6 +2042,7 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
     endTime: ev.endTime || undefined,
     location: ev.location,
     description: ev.description,
+    colorId: ev.colorId,
   });
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -1988,16 +2068,46 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
           <IconBack />
           캘린더
         </button>
-        <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
-          저장
-        </button>
+        <div className="head-actions">
+          <button
+            className={`icon-btn del-btn${confirmDel ? " confirm" : ""}`}
+            aria-label={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+            title={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+            disabled={busy}
+            onClick={() => {
+              if (!confirmDel) {
+                setConfirmDel(true);
+                return toast("한 번 더 누르면 일정을 삭제해요");
+              }
+              run(async (t) => {
+                await gcal.deleteEvent(t, ev.id);
+                await files.removeOwner(ev.id).catch(() => {});
+              }, "일정을 삭제했어요");
+            }}
+            onBlur={() => setConfirmDel(false)}
+          >
+            <IconTrash />
+          </button>
+          <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
+            저장
+          </button>
+        </div>
       </header>
       <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
-      <button className="btn wide add-todo" disabled={busy} onClick={onAddTodo}>
-        할 일에 추가
-      </button>
       <div className="fields">
         <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
+        <div className="field color-field">
+          <span className="color-label">
+            <span className="swatch" style={{ background: gcal.colorHex(d.colorId) ?? "var(--accent)" }} />
+            {gcal.EVENT_COLORS.find((c) => c.id === d.colorId)?.name ?? "캘린더 기본 색"}
+          </span>
+          <div className="swatches" role="radiogroup" aria-label="일정 색">
+            <button type="button" role="radio" aria-checked={!d.colorId} aria-label="캘린더 기본 색" className={`swatch default${!d.colorId ? " on" : ""}`} onClick={() => setD({ ...d, colorId: undefined })} />
+            {gcal.EVENT_COLORS.map((c) => (
+              <button type="button" role="radio" key={c.id} aria-checked={d.colorId === c.id} aria-label={c.name} title={c.name} className={`swatch${d.colorId === c.id ? " on" : ""}`} style={{ background: c.hex }} onClick={() => setD({ ...d, colorId: c.id })} />
+            ))}
+          </div>
+        </div>
         <div className="field memo">
           <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
         </div>
@@ -2005,16 +2115,132 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
           <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
         </div>
       </div>
-      <button
-        className="secondary danger-text wide"
-        disabled={busy}
-        onClick={() => (confirmDel ? run((t) => gcal.deleteEvent(t, ev.id), "일정을 삭제했어요") : setConfirmDel(true))}
-        onBlur={() => setConfirmDel(false)}
-      >
-        {confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+      <div className="ask">
+        <textarea
+          rows={1}
+          placeholder="이 일정에 대해 클론에게 물어보기"
+          value={ask}
+          onChange={(e) => setAsk(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              startAsk();
+            }
+          }}
+        />
+        <button className="send" aria-label="보내기" onClick={startAsk} disabled={!ask.trim()}>
+          <IconUp />
+        </button>
+      </div>
+      {last && (
+        <button className="resume" onClick={() => onChat()}>
+          <IconChat />
+          <span className="grow">
+            <strong>이 일정 대화</strong>
+            <span className="preview">{last.text.replace(/[*`#]/g, "")}</span>
+          </span>
+          <span className="chev"><IconRight /></span>
+        </button>
+      )}
+      <EventFiles owner={ev.id} />
+      <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
+        할 일에 추가
       </button>
-      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요.</p>
+      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요. 첨부 파일은 이 기기에만 보관돼요.</p>
     </section>
+  );
+}
+
+/* 일정별 첨부 파일: 이 기기에 보관하고 눌러서 연다 */
+function EventFiles({ owner }: { owner: string }) {
+  const [list, setList] = useState<(files.Attachment & { url: string })[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  // 파일을 여는 임시 주소(blob:)는 목록을 새로 읽거나 화면을 떠날 때 정리
+  const listRef = useRef(list);
+  const reload = useCallback(() => {
+    files
+      .list(owner)
+      .then((all) => {
+        listRef.current.forEach((a) => URL.revokeObjectURL(a.url));
+        listRef.current = all.map((a) => ({ ...a, url: URL.createObjectURL(a.blob) }));
+        setList(listRef.current);
+      })
+      .catch((e) => toast((e as Error).message));
+  }, [owner]);
+  useEffect(reload, [reload]);
+  useEffect(() => () => listRef.current.forEach((a) => URL.revokeObjectURL(a.url)), []);
+
+  const addFiles = async (fl: FileList | null) => {
+    if (!fl?.length) return;
+    setBusy(true);
+    try {
+      for (const f of Array.from(fl)) await files.add(owner, f);
+      toast(fl.length > 1 ? `파일 ${fl.length}개를 첨부했어요` : "파일을 첨부했어요");
+    } catch (e) {
+      toast((e as Error).message || "파일을 저장하지 못했어요.");
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  };
+
+  return (
+    <div className="ev-files">
+      <div className="section-head">
+        <h3>첨부 파일</h3>
+        <label className={`filebtn small-btn${busy ? " busy" : ""}`}>
+          <IconClip />
+          {busy ? "올리는 중" : "파일 추가"}
+          <input
+            type="file"
+            multiple
+            disabled={busy}
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {list.length === 0 ? (
+        <p className="muted small empty-files">관련 문서나 사진을 올려 두면 여기서 바로 열어볼 수 있어요.</p>
+      ) : (
+        <ul className="threads file-list">
+          {list.map((a) => (
+            <li key={a.id}>
+              <a className="file-open" href={a.url} target="_blank" rel="noopener" download={/^(image|video|audio|text)\/|pdf$/.test(a.type) ? undefined : a.name}>
+                <span className="file-ico">
+                  {a.type.startsWith("image/") ? <img src={a.url} alt="" /> : <span>{(a.name.split(".").pop() || "파일").slice(0, 4).toUpperCase()}</span>}
+                </span>
+                <span className="grow">
+                  <strong>{a.name}</strong>
+                  <span className="preview">
+                    {files.sizeLabel(a.size)} · {new Date(a.added).toLocaleDateString("ko-KR")}
+                  </span>
+                </span>
+              </a>
+              <button
+                className={`icon-btn file-del${confirmId === a.id ? " confirm" : ""}`}
+                aria-label={confirmId === a.id ? "한 번 더 누르면 삭제" : "첨부 파일 삭제"}
+                onClick={() => {
+                  if (confirmId !== a.id) return setConfirmId(a.id);
+                  files
+                    .remove(a.id)
+                    .then(() => toast("첨부 파일을 지웠어요"))
+                    .catch((e) => toast((e as Error).message))
+                    .finally(reload);
+                }}
+                onBlur={() => setConfirmId(null)}
+              >
+                {confirmId === a.id ? <IconTrash /> : <IconClose />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -2041,8 +2267,11 @@ function CalendarView(props: {
   calOn: boolean;
   linked: boolean;
   onConnect: () => void;
+  eventChats: Record<string, Item>;
+  reopen: CalEvent | null;
   onOpen: (id: string) => void;
   onAddTodo: (ev: CalEvent) => void;
+  onChat: (ev: CalEvent, initial?: string) => void;
   onGoSettings: () => void;
 }) {
   const today = ymd(new Date());
@@ -2059,7 +2288,7 @@ function CalendarView(props: {
   });
   const [selected, setSelected] = useState(today);
   const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<CalEvent | null>(null);
+  const [editing, setEditing] = useState<CalEvent | null>(props.reopen);
 
   useEffect(() => {
     try {
@@ -2111,7 +2340,7 @@ function CalendarView(props: {
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
-  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e });
+  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) });
   const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
@@ -2129,14 +2358,16 @@ function CalendarView(props: {
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}`} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
+    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
       <span className="ev-bar" />
       <span className="ev-time">
         {e.time ? e.time : "종일"}
         {e.time && e.endTime && <small>{e.endTime}</small>}
       </span>
-      <span className="ev-title">{e.title}</span>
-      {e.kind === "todo" && <span className="tag">할 일</span>}
+      <span className="ev-title">
+        {e.kind === "todo" && <span className="todo-dot" aria-label="할 일" />}
+        {e.title}
+      </span>
     </li>
   );
 
@@ -2146,6 +2377,8 @@ function CalendarView(props: {
         ev={editing}
         onClose={() => setEditing(null)}
         onAddTodo={() => props.onAddTodo(editing)}
+        chat={props.eventChats[editing.id]?.chat ?? []}
+        onChat={(initial) => props.onChat(editing, initial)}
         onSaved={() => {
           setEditing(null);
           load();
@@ -2224,7 +2457,8 @@ function CalendarView(props: {
                 >
                   <span className="num">{d.getDate()}</span>
                   {list.slice(0, 2).map((e) => (
-                    <span key={e.key} className={`chip-ev ${e.kind}`}>
+                    <span key={e.key} className={`chip-ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)}>
+                      {e.kind === "todo" && <span className="todo-dot" />}
                       {e.title}
                     </span>
                   ))}
