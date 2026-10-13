@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import type { Action, Item, Msg, Settings } from "./store";
+import type { Action, HomeThread, Item, Msg, Settings } from "./store";
 import type { CalEvent } from "./gcal";
 
 // 개인용 앱이라 브라우저에서 내 API 키로 바로 호출한다. 키는 이 기기에만 저장된다.
@@ -288,6 +288,30 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
   return tools;
 };
 
+// 다른 홈 채팅들을 클론이 기억하도록 넘기는 기록. 최근 채팅부터, 너무 길면 오래된 것부터 뺀다.
+const MEMORY_BUDGET = 120_000; // 글자 수
+function pastChatsText(chats: HomeThread[]) {
+  const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + "…" : t);
+  const day = (ts: number) => new Date(ts).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", weekday: "short" });
+  const parts: string[] = [];
+  let used = 0;
+  for (const t of [...chats].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    if (!t.msgs.length) continue;
+    const lines = t.msgs.map((m) => {
+      const did = m.actions?.length ? ` [한 일: ${m.actions.map((a) => a.text + (a.undone ? " (되돌림)" : "")).join(" / ")}]` : "";
+      return `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text.replace(/\s+/g, " ").trim(), 1500)}${did}`;
+    });
+    const block = `### ${t.title || "채팅"} (${day(t.createdAt)}${day(t.updatedAt) !== day(t.createdAt) ? "~" + day(t.updatedAt) : ""})\n${lines.join("\n")}`;
+    if (used + block.length > MEMORY_BUDGET) {
+      if (!parts.length) parts.push(block.slice(-MEMORY_BUDGET));
+      break;
+    }
+    parts.push(block);
+    used += block.length;
+  }
+  return parts.join("\n\n");
+}
+
 function historyFor(msgs: Msg[]) {
   return msgs.slice(-30).map((m) => ({
     role: m.role,
@@ -307,8 +331,10 @@ export async function homeChat(
   userText: string,
   onText: (textSoFar: string) => void,
   run: ToolRunner,
+  otherChats: HomeThread[] = [],
 ): Promise<{ text: string; actions: Action[] }> {
   const c = client(s);
+  const memory = pastChatsText(otherChats);
   const open = items.filter((i) => !i.done);
   const itemsText = open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}`).join("\n\n") || "(없음)";
   const evText = eventsText(events, 80, true);
@@ -325,6 +351,19 @@ export async function homeChat(
     "도구를 쓴 뒤에는 무엇을 어디에 넣었는지 한두 문장으로 알려 준다. 그냥 질문이나 잡담이면 도구 없이 답한다. " +
     "지금 무엇을 해야 할지 물으면 일정과 캘린더를 보고 하나를 골라 준다.\n\n" +
     `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}`;
+  // 이전 채팅 기록은 길고 자주 바뀌지 않아서 앞에 두고 캐시해 비용을 줄인다.
+  const systemBlocks: Anthropic.TextBlockParam[] = [
+    ...(memory
+      ? [
+          {
+            type: "text" as const,
+            text: `## 이전 채팅 기록\n아래는 사용자와 다른 채팅에서 나눈 대화다(최근 것부터). 지금 채팅과 이어진 하나의 기억으로 여기고, 사용자가 전에 말한 내용·정한 것·취향을 기억해서 답한다. "전에 말했잖아" 같은 말에는 여기서 찾아 답한다.\n\n${memory}`,
+            cache_control: { type: "ephemeral" as const },
+          },
+        ]
+      : []),
+    { type: "text", text: system },
+  ];
 
   const messages: Anthropic.MessageParam[] = [...historyFor(past), { role: "user", content: userText }];
   const actions: Action[] = [];
@@ -334,7 +373,7 @@ export async function homeChat(
       model: s.model,
       max_tokens: 64000,
       output_config: { effort: "low" },
-      system,
+      system: systemBlocks,
       tools: homeTools(calendar),
       tool_choice: { type: "auto" },
       messages,

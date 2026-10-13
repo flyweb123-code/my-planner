@@ -56,7 +56,7 @@ export default function App() {
   const recentHome = threads
     .flatMap((t) => t.msgs)
     .sort((a, b) => a.ts - b.ts)
-    .slice(-6);
+    .slice(-20);
   const [view, setView] = useState<View>({ name: "home" });
   // 지난번에 받아 둔 일정을 먼저 보여 주고, 구글에서 새로 받아 오면 바꾼다.
   const [events, setEvents] = useState<CalEvent[]>(() => (gcal.wasLinked() ? (gcal.cachedUpcoming(60) ?? []) : []));
@@ -506,6 +506,7 @@ export default function App() {
             calExpired={calExpired}
             onReconnect={connectCalendar}
             chat={homeChat}
+            otherChats={threads.filter((t) => t.id !== activeId)}
             setChat={setHomeChat}
             runTool={runTool}
             onUndo={undo}
@@ -647,6 +648,7 @@ export default function App() {
 let briefCache: { at: number; brief: Briefing; evKey: string } | null = null;
 
 function HomeChat(props: {
+  otherChats: HomeThread[];
   onMenu: () => void;
   onNewChat: () => void;
   items: Item[];
@@ -685,7 +687,7 @@ function HomeChat(props: {
     const past = chat;
     setChat((c) => [...c, { role: "user", text, ts: Date.now() }]);
     try {
-      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool);
+      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats);
       if (r.actions.length) briefCache = null;
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
