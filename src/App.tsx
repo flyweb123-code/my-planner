@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
-import type { Action, Item, Msg, Settings } from "./store";
+import type { Action, Item, Msg, Settings, Subtask } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
@@ -13,7 +13,7 @@ import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, Ic
 import * as files from "./files";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; initial?: string } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "sub"; id: string; sub: string } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; initial?: string } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -504,7 +504,7 @@ export default function App() {
   };
 
   const open = (id: string) => id && setView({ name: "item", id });
-  const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
+  const current = view.name === "item" || view.name === "chat" || view.name === "sub" ? items.find((i) => i.id === view.id) : undefined;
 
   // 대화 화면이 떠 있는 동안에는 뒤쪽 문서가 스크롤되지 않게 잠근다.
   const chatScreen = view.name === "home" || view.name === "chat" || view.name === "evchat";
@@ -541,6 +541,7 @@ export default function App() {
             item={current}
             gToken={gToken}
             onChat={(sub, initial) => setView({ name: "chat", id: current.id, sub, initial })}
+            onOpenSub={(sub) => setView({ name: "sub", id: current.id, sub })}
             update={(fn) => updateItem(current.id, fn)}
             onDelete={() => {
               removeTodo(current.id);
@@ -550,7 +551,16 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView(view.sub ? { name: "sub", id: current.id, sub: view.sub } : { name: "item", id: current.id })} />
+        )}
+        {view.name === "sub" && current && current.subtasks.some((s) => s.id === view.sub) && (
+          <SubtaskView
+            item={current}
+            sub={current.subtasks.find((s) => s.id === view.sub)!}
+            update={(fn) => updateItem(current.id, fn)}
+            onChat={() => setView({ name: "chat", id: current.id, sub: view.sub })}
+            onBack={() => setView({ name: "item", id: current.id })}
+          />
         )}
         {view.name === "calendar" && (
           <CalendarView
@@ -1371,6 +1381,7 @@ function ItemView(props: {
   onDelete: () => void;
   onBack: () => void;
   onChat: (subId?: string, initial?: string) => void;
+  onOpenSub: (subId: string) => void;
 }) {
   const { item, update } = props;
   const [newSub, setNewSub] = useState("");
@@ -1499,7 +1510,7 @@ function ItemView(props: {
               key={s.id}
               open={swiped === s.id}
               onOpenChange={(o) => setSwiped(o ? s.id : null)}
-              onTap={() => props.onChat(s.id)}
+              onTap={() => props.onOpenSub(s.id)}
               actions={[
                 { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
                 { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
@@ -2200,6 +2211,7 @@ function EventEditor({
   todoId,
   onOpenTodo,
   onSavedEdit,
+  isNew,
 }: {
   ev: CalEvent;
   chat: Msg[];
@@ -2210,14 +2222,8 @@ function EventEditor({
   todoId?: string; // 이 일정과 이어진 할 일 (이 기기에 있을 때)
   onOpenTodo: (id: string) => void;
   onSavedEdit: (d: gcal.EventEdit) => void;
+  isNew?: boolean; // 달력에서 날짜를 눌러 새 일정을 만드는 중
 }) {
-  const [ask, setAsk] = useState("");
-  const last = chat[chat.length - 1];
-  const startAsk = () => {
-    if (!ask.trim()) return;
-    onChat(ask.trim());
-    setAsk("");
-  };
   const [original] = useState<gcal.EventEdit>(() => ({
     title: ev.title,
     due: ev.date,
@@ -2240,7 +2246,7 @@ function EventEditor({
   });
   const [busy, setBusy] = useState(false);
   const [menu, setMenu] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(!!isNew);
   const [confirmDel, setConfirmDel] = useState(false);
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -2265,6 +2271,8 @@ function EventEditor({
           캘린더
         </button>
         <div className="head-actions">
+          {!editing && <ChatIconButton count={chat.length} onClick={() => onChat()} label="이 일정에 대해 클론과 대화" />}
+          {!isNew && (
           <div className="menu-wrap">
             <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
               <IconMore />
@@ -2289,13 +2297,16 @@ function EventEditor({
               </div>
             )}
           </div>
+          )}
           {editing && (
             <button
               onClick={() =>
-                run(async (t) => {
-                  await gcal.updateEvent(t, ev.id, d);
-                  onSavedEdit(d);
-                }, "구글 캘린더에 저장했어요")
+                isNew
+                  ? run((t) => gcal.createEvent(t, d), "캘린더에 일정을 추가했어요")
+                  : run(async (t) => {
+                      await gcal.updateEvent(t, ev.id, d);
+                      onSavedEdit(d);
+                    }, "구글 캘린더에 저장했어요")
               }
               disabled={busy || !d.title.trim()}
             >
@@ -2306,7 +2317,7 @@ function EventEditor({
       </header>
       {editing ? (
         <>
-          <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
+          <input className="title-input" placeholder="제목 추가" autoFocus={isNew} value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
           <div className="fields">
             <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
             <div className="field memo">
@@ -2318,16 +2329,18 @@ function EventEditor({
           </div>
           <EditPanel
             onDone={() => {
+              if (isNew) return onClose();
               setEditing(false);
               setD(original);
             }}
             doneLabel="취소"
-            hint="바꾼 내용은 오른쪽 위 저장을 눌러야 구글 캘린더에 반영돼요."
+            title={isNew ? "새 일정" : "수정"}
+            hint={isNew ? "오른쪽 위 저장을 누르면 구글 캘린더에 추가돼요. 첨부 파일은 저장한 뒤 넣을 수 있어요." : "바꾼 내용은 오른쪽 위 저장을 눌러야 구글 캘린더에 반영돼요."}
           >
             <div className="fields">
               <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
             </div>
-            <EventFiles owner={ev.id} editable />
+            {!isNew && <EventFiles owner={ev.id} editable />}
           </EditPanel>
         </>
       ) : (
@@ -2356,36 +2369,8 @@ function EventEditor({
           </div>
         </>
       )}
-      {!editing && (
-      <div className="ask">
-        <textarea
-          rows={1}
-          placeholder="이 일정에 대해 클론에게 물어보기"
-          value={ask}
-          onChange={(e) => setAsk(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              startAsk();
-            }
-          }}
-        />
-        <button className="send" aria-label="보내기" onClick={startAsk} disabled={!ask.trim()}>
-          <IconUp />
-        </button>
-      </div>
-      )}
-      {last && !editing && (
-        <button className="resume" onClick={() => onChat()}>
-          <IconChat />
-          <span className="grow">
-            <strong>이 일정 대화</strong>
-            <span className="preview">{last.text.replace(/[*`#]/g, "")}</span>
-          </span>
-          <span className="chev"><IconRight /></span>
-        </button>
-      )}
       {!editing && <EventFiles owner={ev.id} />}
+      {!isNew && (<>
       {todoId ? (
         <button className="wide add-todo" onClick={() => onOpenTodo(todoId)}>
           할 일 열기
@@ -2396,16 +2381,109 @@ function EventEditor({
         </button>
       )}
       <p className="muted small hint">일정 내용은 오른쪽 위 ⋯ → 수정에서 바꿀 수 있어요. 첨부 파일은 이 기기에만 보관돼요.</p>
+      </>)}
+    </section>
+  );
+}
+
+/* 일정·세부 업무 화면 위쪽의 클론 대화 버튼. 나눈 대화 수를 작은 숫자로 보여 준다. */
+function ChatIconButton({ count, onClick, label }: { count: number; onClick: () => void; label: string }) {
+  return (
+    <button className="icon-btn chat-icon" aria-label={label} onClick={(e) => (e.stopPropagation(), onClick())}>
+      <IconChat />
+      {count > 0 && <span className="badge">{count > 99 ? "99+" : count}</span>}
+    </button>
+  );
+}
+
+/* 세부 업무 화면: 일정 화면과 같은 구성. 평소엔 보기만, ⋯ → 수정에서 제목·메모·첨부를 바꾼다. */
+function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) => Item) => void; onChat: () => void; onBack: () => void }) {
+  const { item, sub } = props;
+  const [menu, setMenu] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const set = (patch: Partial<Subtask>) =>
+    props.update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === sub.id ? { ...x, ...patch } : x)) }));
+  const toggle = () => set({ done: !sub.done });
+  const remove = () => {
+    files.removeOwner(sub.id).catch(() => {});
+    props.update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== sub.id) }));
+    props.onBack();
+  };
+  const chat = sub.chat ?? [];
+  return (
+    <section className="detail event-edit" onClick={() => (setMenu(false), setConfirmDel(false))}>
+      <header className="page-head">
+        <button className="back" onClick={props.onBack}>
+          <IconBack />
+          {item.title.length > 12 ? item.title.slice(0, 12) + "…" : item.title}
+        </button>
+        <div className="head-actions">
+          {!editing && <ChatIconButton count={chat.length} onClick={props.onChat} label="이 세부 업무에 대해 클론과 대화" />}
+          <div className="menu-wrap">
+            <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
+              <IconMore />
+            </button>
+            {menu && (
+              <div className="popover" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => (setEditing(!editing), setMenu(false))}>{editing ? "수정 끝내기" : "수정"}</button>
+                <button onClick={() => (toggle(), setMenu(false))}>{sub.done ? "완료 취소" : "완료로 표시"}</button>
+                <button className="danger" onClick={() => (confirmDel ? remove() : setConfirmDel(true))}>
+                  {confirmDel ? "한 번 더 누르면 삭제" : "세부 업무 삭제"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+      {editing ? (
+        <>
+          <input className="title-input" placeholder="세부 업무 이름" value={sub.title} onChange={(e) => set({ title: e.target.value })} />
+          <div className="fields">
+            <div className="field memo">
+              <textarea placeholder="메모 추가" value={sub.note ?? ""} onChange={(e) => set({ note: e.target.value })} />
+            </div>
+          </div>
+          <EditPanel onDone={() => setEditing(false)}>
+            <EventFiles owner={sub.id} editable />
+          </EditPanel>
+        </>
+      ) : (
+        <>
+          <h1 className={`title-view ${sub.done ? "is-done" : ""}`}>{sub.title || "(이름 없음)"}</h1>
+          <div className="fields event-info">
+            <div className="field">
+              <span className={`tick ${sub.done ? "on" : ""}`}>{sub.done && <IconCheck />}</span>
+              <span className="grow">{sub.done ? "완료" : "진행 중"}</span>
+            </div>
+            <div className="field" onClick={props.onBack} style={{ cursor: "pointer" }}>
+              <span className="info-label">할 일</span>
+              <span className="grow">{item.title}</span>
+            </div>
+            {sub.note && (
+              <div className="field info-desc">
+                <span className="info-label">메모</span>
+                <span className="grow">{sub.note}</span>
+              </div>
+            )}
+          </div>
+          <EventFiles owner={sub.id} />
+        </>
+      )}
+      <button className={`wide add-todo ${sub.done ? "secondary" : ""}`} onClick={toggle}>
+        {sub.done ? "완료 취소" : "완료로 표시"}
+      </button>
+      <p className="muted small hint">이름과 메모는 오른쪽 위 ⋯ → 수정에서 바꿀 수 있어요. 클론과 대화하려면 말풍선을 누르세요.</p>
     </section>
   );
 }
 
 /* ⋯ → 수정을 눌렀을 때만 보이는 칸 (색, 첨부 파일) */
-function EditPanel({ children, onDone, hint, doneLabel = "완료" }: { children: React.ReactNode; onDone: () => void; hint?: string; doneLabel?: string }) {
+function EditPanel({ children, onDone, hint, doneLabel = "완료", title = "수정" }: { children: React.ReactNode; onDone: () => void; hint?: string; doneLabel?: string; title?: string }) {
   return (
     <div className="edit-panel">
       <div className="section-head">
-        <h3>수정</h3>
+        <h3>{title}</h3>
         <button className="btn small tonal" onClick={onDone}>
           {doneLabel}
         </button>
@@ -2576,6 +2654,8 @@ function CalendarView(props: {
   const [selected, setSelected] = useState(today);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<CalEvent | null>(props.reopen);
+  // 날짜를 골라 새 일정을 만드는 중이면 그 날짜
+  const [creating, setCreating] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -2665,8 +2745,8 @@ function CalendarView(props: {
       const top = g.getBoundingClientRect().top + window.scrollY;
       const tabs = document.querySelector(".tabs")?.getBoundingClientRect();
       const bottom = tabs ? tabs.top - 8 : window.innerHeight - 96;
-      // 달력 아래: 날짜 제목(약 52px) + 일정 한 줄(약 50px)
-      const avail = bottom - top - 2 - 52 - 50;
+      // 달력 아래: 날짜 제목과 일정 추가 버튼(약 60px) + 일정 한 줄(약 50px)
+      const avail = bottom - top - 2 - 60 - 50;
       setRowH(Math.max(44, Math.min(74, Math.floor(avail / 6))));
     };
     fit();
@@ -2698,6 +2778,23 @@ function CalendarView(props: {
     </li>
   );
 
+  if (creating)
+    return (
+      <EventEditor
+        isNew
+        ev={{ id: "", title: "", date: creating, time: "", endDate: creating, endTime: "", location: "", description: "" } as CalEvent}
+        chat={[]}
+        onClose={() => setCreating(null)}
+        onAddTodo={() => {}}
+        onOpenTodo={() => {}}
+        onSavedEdit={() => {}}
+        onChat={() => {}}
+        onSaved={() => {
+          setCreating(null);
+          load();
+        }}
+      />
+    );
   if (editing)
     return (
       <EventEditor
@@ -2809,7 +2906,14 @@ function CalendarView(props: {
             })}
           </div>
           <div className="day-panel">
-            <h3>{dayLabel(selected)}</h3>
+            <div className="day-head">
+              <h3>{dayLabel(selected)}</h3>
+              {(props.calOn || props.linked) && (
+                <button className="btn small tonal" onClick={() => setCreating(selected)}>
+                  <IconPlus /> 일정 추가
+                </button>
+              )}
+            </div>
             {(byDay.get(selected) ?? []).length ? (
               <ul className="evlist">
                 {byDay.get(selected)!.map((e) => (

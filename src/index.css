@@ -484,3 +484,16 @@ html.chat-lock .app { min-height: 0; }
 .grid.slide-prev { animation: cal-prev .22s ease-out; }
 @keyframes cal-next { from { opacity: .3; transform: translateX(24px); } to { opacity: 1; transform: none; } }
 @keyframes cal-prev { from { opacity: .3; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+
+/* 일정·세부 업무 화면 위쪽 클론 대화 버튼 */
+.chat-icon { position: relative; color: var(--accent); }
+.chat-icon svg { width: 22px; height: 22px; }
+.chat-icon .badge { position: absolute; top: 1px; right: -1px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.title-view.is-done { color: var(--muted); text-decoration: line-through; }
+.event-info .tick { flex: none; }
+
+/* 달력 아래 선택한 날 제목 + 일정 추가 버튼 */
+.day-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 24px; margin-bottom: 8px; }
+.day-head h3 { margin: 0; }
+.day-head .btn { display: inline-flex; align-items: center; gap: 4px; }
+.day-head .btn svg { width: 14px; height: 14px; }
