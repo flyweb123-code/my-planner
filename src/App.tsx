@@ -502,6 +502,15 @@ export default function App() {
             onConnect={connectCalendar}
             onOpen={open}
             onAddTodo={addEventAsTodo}
+            onEventSaved={(ev, d) => {
+              // 할 일과 이어진 일정을 고쳤으면 할 일도 같은 날짜·시간·색으로 맞춘다 (다시 덮어쓰지 않게)
+              const it = itemsRef.current.find((i) => i.calendarEventId === ev.id);
+              if (!it) return;
+              updateItem(it.id, (x) => {
+                const next = { ...x, title: d.title, due: d.due, time: d.time, endDate: d.endDate, endTime: d.endTime, colorId: d.colorId ?? (x.colorId === undefined ? undefined : "") };
+                return { ...next, calSynced: syncKey(next) };
+              });
+            }}
             onChat={(ev, initial) => setView({ name: "evchat", ev, initial })}
             onGoSettings={() => setView({ name: "settings" })}
           />
@@ -1177,6 +1186,12 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
 const fmtDay = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }).replace(/\((.)\)/, "($1)");
 const fmtTime = (t: string) => new Date(`2000-01-01T${t}:00`).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
 const today = () => new Date().toLocaleDateString("sv-SE");
+// 일정 화면에서 보여 주는 날짜·시간 한 줄
+const schedText = (d: Pick<Item, "due" | "time" | "endDate" | "endTime">) => {
+  const end = itemEnd(d);
+  if (!d.time) return end.date !== d.due ? `${fmtDay(d.due)} ~ ${fmtDay(end.date)} · 종일` : `${fmtDay(d.due)} · 종일`;
+  return end.date !== d.due ? `${fmtDay(d.due)} ${fmtTime(d.time)} ~ ${fmtDay(end.date)} ${fmtTime(end.time!)}` : `${fmtDay(d.due)} · ${fmtTime(d.time)} ~ ${fmtTime(end.time!)}`;
+};
 
 // 글자를 누르면 그 자리에 숨겨 둔 날짜/시간 선택기가 열린다.
 function PickText(props: { type: "date" | "time"; value: string; text: string; onChange: (v: string) => void; className?: string }) {
@@ -2103,6 +2118,9 @@ function EventEditor({
   onSaved,
   onAddTodo,
   onChat,
+  todoId,
+  onOpenTodo,
+  onSavedEdit,
 }: {
   ev: CalEvent;
   chat: Msg[];
@@ -2110,6 +2128,9 @@ function EventEditor({
   onSaved: () => void;
   onAddTodo: () => void;
   onChat: (initial?: string) => void;
+  todoId?: string; // 이 일정과 이어진 할 일 (이 기기에 있을 때)
+  onOpenTodo: (id: string) => void;
+  onSavedEdit: (d: gcal.EventEdit) => void;
 }) {
   const [ask, setAsk] = useState("");
   const last = chat[chat.length - 1];
@@ -2118,6 +2139,16 @@ function EventEditor({
     onChat(ask.trim());
     setAsk("");
   };
+  const [original] = useState<gcal.EventEdit>(() => ({
+    title: ev.title,
+    due: ev.date,
+    time: ev.time || undefined,
+    endDate: ev.endDate,
+    endTime: ev.endTime || undefined,
+    location: ev.location,
+    description: ev.description,
+    colorId: ev.colorId,
+  }));
   const [d, setD] = useState<gcal.EventEdit>({
     title: ev.title,
     due: ev.date,
@@ -2179,28 +2210,72 @@ function EventEditor({
               </div>
             )}
           </div>
-          <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
-            저장
-          </button>
+          {editing && (
+            <button
+              onClick={() =>
+                run(async (t) => {
+                  await gcal.updateEvent(t, ev.id, d);
+                  onSavedEdit(d);
+                }, "구글 캘린더에 저장했어요")
+              }
+              disabled={busy || !d.title.trim()}
+            >
+              저장
+            </button>
+          )}
         </div>
       </header>
-      <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
-      <div className="fields">
-        <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
-        <div className="field memo">
-          <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
-        </div>
-        <div className="field memo">
-          <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
-        </div>
-      </div>
-      {editing && (
-        <EditPanel onDone={() => setEditing(false)} hint="색은 저장을 눌러야 구글 캘린더에 반영돼요.">
+      {editing ? (
+        <>
+          <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
           <div className="fields">
-            <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
+            <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
+            <div className="field memo">
+              <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
+            </div>
+            <div className="field memo">
+              <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
+            </div>
           </div>
-          <EventFiles owner={ev.id} editable />
-        </EditPanel>
+          <EditPanel
+            onDone={() => {
+              setEditing(false);
+              setD(original);
+            }}
+            doneLabel="취소"
+            hint="바꾼 내용은 오른쪽 위 저장을 눌러야 구글 캘린더에 반영돼요."
+          >
+            <div className="fields">
+              <ColorField value={d.colorId} onChange={(c) => setD({ ...d, colorId: c })} />
+            </div>
+            <EventFiles owner={ev.id} editable />
+          </EditPanel>
+        </>
+      ) : (
+        <>
+          <h1 className="title-view">
+            {todoId && <span className="todo-dot" aria-label="할 일" />}
+            {d.title || "(제목 없음)"}
+          </h1>
+          <div className="fields event-info">
+            <div className="field">
+              <span className="sched-icon"><IconClock /></span>
+              <span className="grow">{schedText(d)}</span>
+            </div>
+            {d.location && (
+              <div className="field">
+                <span className="info-label">위치</span>
+                <span className="grow">{d.location}</span>
+              </div>
+            )}
+            {d.description && (
+              <div className="field info-desc">
+                <span className="info-label">설명</span>
+                <span className="grow">{d.description}</span>
+              </div>
+            )}
+          </div>
+        </>
       )}
       <div className="ask">
         <textarea
@@ -2230,22 +2305,28 @@ function EventEditor({
         </button>
       )}
       {!editing && <EventFiles owner={ev.id} />}
-      <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
-        할 일에 추가
-      </button>
-      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요. 첨부 파일은 이 기기에만 보관돼요.</p>
+      {todoId ? (
+        <button className="wide add-todo" onClick={() => onOpenTodo(todoId)}>
+          할 일 열기
+        </button>
+      ) : (
+        <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
+          할 일에 추가
+        </button>
+      )}
+      <p className="muted small hint">일정 내용은 오른쪽 위 ⋯ → 수정에서 바꿀 수 있어요. 첨부 파일은 이 기기에만 보관돼요.</p>
     </section>
   );
 }
 
 /* ⋯ → 수정을 눌렀을 때만 보이는 칸 (색, 첨부 파일) */
-function EditPanel({ children, onDone, hint }: { children: React.ReactNode; onDone: () => void; hint?: string }) {
+function EditPanel({ children, onDone, hint, doneLabel = "완료" }: { children: React.ReactNode; onDone: () => void; hint?: string; doneLabel?: string }) {
   return (
     <div className="edit-panel">
       <div className="section-head">
         <h3>수정</h3>
         <button className="btn small tonal" onClick={onDone}>
-          완료
+          {doneLabel}
         </button>
       </div>
       {children}
@@ -2396,6 +2477,7 @@ function CalendarView(props: {
   onOpen: (id: string) => void;
   onAddTodo: (ev: CalEvent) => void;
   onChat: (ev: CalEvent, initial?: string) => void;
+  onEventSaved: (ev: CalEvent, d: gcal.EventEdit) => void;
   onGoSettings: () => void;
 }) {
   const today = ymd(new Date());
@@ -2482,7 +2564,7 @@ function CalendarView(props: {
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.itemId && props.items.some((i) => i.id === e.itemId) ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
+    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}>
       <span className="ev-bar" />
       <span className="ev-time">
         {e.time ? e.time : "종일"}
@@ -2501,6 +2583,9 @@ function CalendarView(props: {
         ev={editing}
         onClose={() => setEditing(null)}
         onAddTodo={() => props.onAddTodo(editing)}
+        todoId={editing.itemId && props.items.some((i) => i.id === editing.itemId) ? editing.itemId : undefined}
+        onOpenTodo={props.onOpen}
+        onSavedEdit={(d) => props.onEventSaved(editing, d)}
         chat={props.eventChats[editing.id]?.chat ?? []}
         onChat={(initial) => props.onChat(editing, initial)}
         onSaved={() => {

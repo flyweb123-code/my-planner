@@ -468,3 +468,11 @@ html.chat-lock .app { min-height: 0; }
 .restore-list li { display: flex; align-items: center; gap: 10px; }
 .restore-list .grow { display: flex; flex-direction: column; min-width: 0; }
 .restore-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 캘린더 일정 화면 (보기). 고치려면 ⋯ → 수정 */
+.title-view { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 0 12px; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.event-info .field { justify-content: flex-start; }
+.event-info .sched-icon { color: var(--muted); display: inline-flex; }
+.event-info .info-label { flex: none; width: 36px; color: var(--muted); font-size: 14px; }
+.event-info .info-desc { align-items: flex-start; padding-top: 14px; padding-bottom: 14px; }
+.event-info .info-desc .grow { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
