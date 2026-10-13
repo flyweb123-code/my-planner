@@ -344,7 +344,7 @@ export default function App() {
     if (existing) return open(existing.id);
     const it = eventToItem(ev);
     commit([it, ...itemsRef.current]);
-    briefCache = null;
+    if (briefCache) briefCache = { ...briefCache, at: 0 }; // 다음에 새로 만들되, 그동안은 지난 브리핑을 보여 준다
     open(it.id);
     toast("할 일에 추가했어요");
     try {
@@ -648,7 +648,25 @@ export default function App() {
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
 
-let briefCache: { at: number; brief: Briefing; evKey: string } | null = null;
+// 마지막 브리핑. 앱을 다시 열면 이걸 바로 보여 주고 뒤에서 새로 만든다 (기다리는 화면 없이).
+type BriefCache = { at: number; brief: Briefing; evKey: string };
+let briefCache: BriefCache | null = (() => {
+  try {
+    const c = JSON.parse(localStorage.getItem("briefCache") ?? "null") as BriefCache | null;
+    // 다른 날 만든 브리핑은 '지금'이 틀릴 수 있어서 쓰지 않는다
+    return c && new Date(c.at).toDateString() === new Date().toDateString() ? c : null;
+  } catch {
+    return null;
+  }
+})();
+const saveBrief = (c: BriefCache) => {
+  briefCache = c;
+  try {
+    localStorage.setItem("briefCache", JSON.stringify(c));
+  } catch {
+    /* 무시 */
+  }
+};
 
 function HomeChat(props: {
   otherChats: HomeThread[];
@@ -691,7 +709,7 @@ function HomeChat(props: {
     setChat((c) => [...c, { role: "user", text, ts: Date.now() }]);
     try {
       const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats);
-      if (r.actions.length) briefCache = null;
+      if (r.actions.length && briefCache) briefCache = { ...briefCache, at: 0 };
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
       setChat((c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]);
@@ -710,20 +728,22 @@ function HomeChat(props: {
 
   // 새 채팅에서는 비서가 먼저 말을 건다: 지금 할 일, 놓친 것, 확인할 것. 30분 동안은 다시 묻지 않는다.
   const [fresh] = useState(chat.length === 0);
-  const [brief, setBrief] = useState<Briefing | null>(() => briefCache?.brief ?? null);
-  const [briefLoading, setBriefLoading] = useState(false);
+  // 저장해 둔 브리핑이 없으면 이 기기에서 바로 만들 수 있는 간단한 브리핑부터 보여 준다.
+  const [brief, setBrief] = useState<Briefing>(() => briefCache?.brief ?? simpleBriefing(items, events));
   const evKey = events.map((e) => `${e.id}|${e.title}|${e.date}|${e.time}`).join(",");
   useEffect(() => {
     if (!settings.apiKey) return setBrief(simpleBriefing(items, events));
     if (briefCache && briefCache.evKey === evKey && Date.now() - briefCache.at < 30 * 60000) return;
-    setBriefLoading(true);
+    let alive = true;
     makeBriefing(settings, items, events)
       .then((b) => {
-        briefCache = { at: Date.now(), brief: b, evKey };
-        setBrief(b);
+        saveBrief({ at: Date.now(), brief: b, evKey });
+        if (alive) setBrief(b);
       })
-      .catch(() => setBrief(simpleBriefing(items, events)))
-      .finally(() => setBriefLoading(false));
+      .catch(() => alive && !briefCache && setBrief(simpleBriefing(items, events)));
+    return () => {
+      alive = false;
+    };
     // 처음 열 때와 캘린더 일정이 들어오거나 바뀌었을 때만 다시 만든다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.apiKey, evKey]);
@@ -756,9 +776,7 @@ function HomeChat(props: {
   const briefing = (
     <div className="msg assistant brief">
       <h2>{greeting()}</h2>
-      {!brief || briefLoading ? (
-        <p className="muted">할 일과 일정을 살펴보는 중…</p>
-      ) : (
+      {(
         <>
           <button className="now-line" onClick={() => settings.apiKey && ask(brief.now.text)}>
             <span className="label">지금</span>
