@@ -423,6 +423,9 @@ html.chat-lock .app { min-height: 0; }
 .head-actions { display: flex; align-items: center; gap: 6px; }
 .del-btn { color: var(--danger); }
 .del-btn.confirm, .file-del.confirm { background: var(--danger); color: #fff; }
+.edit-panel { margin-top: 18px; }
+.edit-panel > .section-head { align-items: center; }
+.edit-panel .ev-files .section-head { margin-top: 16px; }
 .ev-files .section-head { align-items: center; margin-top: 22px; }
 .small-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; padding: 7px 12px; }
 .small-btn svg { width: 17px; height: 17px; }

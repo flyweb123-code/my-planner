@@ -354,11 +354,17 @@ export async function updateEvent(token: string, eventId: string, e: EventEdit) 
   });
 }
 
-type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string };
+type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string; colorId?: string };
 
 // 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 시작~종료, 없으면 종일 일정.
 function body(it: ItemLike) {
-  const base = { summary: it.title, description: "클론 앱에서 추가한 할 일", extendedProperties: { private: { plannerItemId: it.id } } };
+  const base = {
+    summary: it.title,
+    description: "클론 앱에서 추가한 할 일",
+    extendedProperties: { private: { plannerItemId: it.id } },
+    // 색을 고른 적이 있을 때만 보낸다. ""(기본 색)는 null로 보내야 구글에서 색이 지워진다.
+    ...(it.colorId === undefined ? {} : { colorId: it.colorId || null }),
+  };
   const e = itemEnd(it);
   if (it.time) {
     const start = new Date(`${it.due}T${it.time}:00`);
@@ -392,6 +398,15 @@ export async function linkEvent(token: string, eventId: string, itemId: string) 
     method: "PATCH",
     body: JSON.stringify({ extendedProperties: { private: { plannerItemId: itemId } } }),
   });
+}
+
+// 클론과 이야기하다 남긴 메모를 일정 설명 끝에 덧붙인다. 다른 기기에서 고친 설명을 지우지 않도록 최신 설명을 먼저 읽는다.
+export async function appendDescription(token: string, eventId: string, text: string): Promise<string> {
+  const cur = await api(token, `/calendars/primary/events/${eventId}`);
+  const prev = ((cur?.description as string | undefined) ?? "").trimEnd();
+  const description = prev ? `${prev}\n${text}` : text;
+  await api(token, `/calendars/primary/events/${eventId}`, { method: "PATCH", body: JSON.stringify({ description }) });
+  return description;
 }
 
 export async function deleteEvent(token: string, eventId: string) {

@@ -25,6 +25,7 @@ export type Item = {
   calendarEventId?: string;
   calSynced?: string; // 마지막으로 캘린더에 반영한 제목/날짜/시간
   pinned?: boolean; // 아이폰 잠금 화면 위젯에 띄울 할 일
+  colorId?: string; // 캘린더 일정 색 (구글 colorId). ""이면 기본 색으로 되돌림, 없으면 건드리지 않음
 };
 // 홈(비서) 대화 하나. Claude 앱처럼 여러 개를 두고 왼쪽 목록에서 고른다.
 export type HomeThread = { id: string; title: string; createdAt: number; updatedAt: number; msgs: Msg[] };
