@@ -436,9 +436,9 @@ export async function checkKey(s: Settings): Promise<string> {
 /* ---------------- 홈 첫 화면 제안: 지금 할 일, 놓친 것, 확인할 것 ---------------- */
 
 const Briefing = z.object({
-  now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 이유 없이 25자 안팎의 짧은 한 줄 (예: '드레스 투어 스타일 사진 모으기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
-  missed: z.array(z.object({ text: z.string().describe("20자 안팎 한 줄"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
-  check: z.array(z.object({ text: z.string().describe("20자 안팎 한 줄"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
+  now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 40자 안팎 한 줄 (예: '타이레놀 기획안: 심의 접수 서류 마무리하기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
+  missed: z.array(z.object({ text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 핵심 내용(날짜·무엇을)이 보이게 40자 안팎 한 줄 (예: '10/26 하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
+  check: z.array(z.object({ text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 핵심 내용(날짜·무엇을)이 보이게 40자 안팎 한 줄 (예: '10/26 하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
 });
 export type Briefing = z.infer<typeof Briefing>;
 
@@ -455,8 +455,8 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
     max_tokens: 2000,
     output_config: { effort: "low", format: zodOutputFormat(Briefing) },
     system:
-      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 아주 짧은 제안을 만든다. " +
-      "한눈에 보이게 각 줄은 이유나 설명 없이 20자 안팎의 짧은 한 줄로 쓴다. 꼭 필요한 것만 넣고, 애매하면 빼서 빈 배열로 둔다. " +
+      "너는 사용자의 개인 비서다. 할 일 목록과 캘린더를 보고 앱 첫 화면에 띄울 간결한 제안을 만든다. " +
+      "각 줄은 40자 안팎 한 줄로, 무엇에 관한 것인지(일정·기획안·할 일 이름) 알 수 있게 이름과 핵심 내용(날짜, 무엇을 할지)을 꼭 넣는다. '그 기획안', '일정 준비'처럼 뭉뚱그리지 않는다. 긴 이유 설명은 빼고, 꼭 필요한 것만 넣고, 애매하면 빼서 빈 배열로 둔다. " +
       "지금 시각을 꼭 고려한다(새벽이면 쉬라고 하거나 아침에 할 일을 알려 주는 식). 각 문장은 짧고 친근한 한국어로. " +
       "할 일 목록뿐 아니라 구글 캘린더 일정도 함께 보고 추천한다. 캘린더 일정의 설명에 적힌 마감, 준비할 것도 읽고, " +
       "곧 다가오는 일정(마감, 약속, 제출일)은 미리 준비할 것을 '확인할 것'이나 '지금'에 넣는다. 오늘 있는 일정은 시간에 맞춰 알려 준다. " +
