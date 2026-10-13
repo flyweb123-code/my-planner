@@ -1949,7 +1949,9 @@ function DataSettings() {
 
 /* ---------------- 캘린더 ---------------- */
 
-type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent };
+type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
+// 구글에서 색을 정한 일정은 그 색으로 칠한다
+const evColor = (e: DayEntry) => (e.color ? ({ "--ev": e.color } as React.CSSProperties) : undefined);
 
 /* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
 function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClose: () => void; onSaved: () => void; onAddTodo: () => void }) {
@@ -1961,6 +1963,7 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
     endTime: ev.endTime || undefined,
     location: ev.location,
     description: ev.description,
+    colorId: ev.colorId,
   });
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -2014,6 +2017,18 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
       <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
       <div className="fields">
         <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
+        <div className="field color-field">
+          <span className="color-label">
+            <span className="swatch" style={{ background: gcal.colorHex(d.colorId) ?? "var(--accent)" }} />
+            {gcal.EVENT_COLORS.find((c) => c.id === d.colorId)?.name ?? "캘린더 기본 색"}
+          </span>
+          <div className="swatches" role="radiogroup" aria-label="일정 색">
+            <button type="button" role="radio" aria-checked={!d.colorId} aria-label="캘린더 기본 색" className={`swatch default${!d.colorId ? " on" : ""}`} onClick={() => setD({ ...d, colorId: undefined })} />
+            {gcal.EVENT_COLORS.map((c) => (
+              <button type="button" role="radio" key={c.id} aria-checked={d.colorId === c.id} aria-label={c.name} title={c.name} className={`swatch${d.colorId === c.id ? " on" : ""}`} style={{ background: c.hex }} onClick={() => setD({ ...d, colorId: c.id })} />
+            ))}
+          </div>
+        </div>
         <div className="field memo">
           <input placeholder="위치 추가" value={d.location} onChange={(e) => setD({ ...d, location: e.target.value })} />
         </div>
@@ -2190,7 +2205,7 @@ function CalendarView(props: {
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
   const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
-  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e });
+  for (const e of events) push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: e.itemId ? "todo" : "google", itemId: e.itemId, ev: e, color: gcal.colorHex(e.colorId) });
   const synced = new Set(events.map((e) => e.itemId).filter(Boolean));
   for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id });
   for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
@@ -2208,7 +2223,7 @@ function CalendarView(props: {
   };
 
   const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}`} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
+    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.itemId ? props.onOpen(e.itemId) : e.ev && setEditing(e.ev))}>
       <span className="ev-bar" />
       <span className="ev-time">
         {e.time ? e.time : "종일"}
@@ -2303,7 +2318,7 @@ function CalendarView(props: {
                 >
                   <span className="num">{d.getDate()}</span>
                   {list.slice(0, 2).map((e) => (
-                    <span key={e.key} className={`chip-ev ${e.kind}`}>
+                    <span key={e.key} className={`chip-ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)}>
                       {e.title}
                     </span>
                   ))}
