@@ -444,3 +444,15 @@ html.chat-lock .app { min-height: 0; }
 .pin-btn.on { color: var(--accent); }
 .steps { margin: 4px 0 14px; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; }
 .panel textarea.code { min-height: 160px; font: 12px/1.45 ui-monospace, monospace; margin-top: 10px; }
+
+/* ---------- 일정 색 (구글 캘린더 colorId) ---------- */
+.chip-ev.colored { background: color-mix(in srgb, var(--ev) 18%, transparent); color: color-mix(in srgb, var(--ev) 80%, var(--text)); }
+.ev.colored .ev-bar { background: var(--ev); }
+.color-field { display: grid; gap: 10px; padding: 12px 14px; }
+.color-label { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.color-label .swatch { width: 18px; height: 18px; flex: 0 0 auto; }
+.swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.swatch { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 0; display: inline-block; }
+.swatches .swatch.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
+.swatch.default { background: var(--accent); position: relative; }
+.swatch.default::after { content: "기본"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 9.5px; font-weight: 700; color: #fff; }
