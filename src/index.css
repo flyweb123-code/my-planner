@@ -532,3 +532,10 @@ html.chat-lock .app { min-height: 0; }
 .sub-new input { border: 0; background: none; padding: 10px 4px; width: 100%; font-size: 15px; }
 .sub-add { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 12px auto 0; border-radius: 50%; border: 1.5px solid var(--line); background: var(--surface); color: var(--accent); padding: 0; }
 .sub-add svg { width: 20px; height: 20px; }
+.brief-row { display: flex; align-items: flex-start; gap: 8px; }
+.date-chip { flex: 0 0 auto; font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 7px; margin-top: 1px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums; }
+.date-chip.soon { background: var(--warn-soft); color: var(--warn); }
+.date-chip.due { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.home-head .head-right { display: flex; align-items: center; gap: 2px; }
+.settings-title { margin: -8px 0 20px; }
+.home-head strong { position: absolute; left: 50%; transform: translateX(-50%); }

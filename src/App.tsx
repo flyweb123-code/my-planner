@@ -685,7 +685,7 @@ export default function App() {
           />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} onCalendarsChanged={loadEvents} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} onCalendarsChanged={loadEvents} onBack={() => setView({ name: "home" })} />
         )}
       </main>
       <PullToRefresh />
@@ -713,7 +713,7 @@ export default function App() {
       )}
       {view.name !== "chat" && view.name !== "evchat" && (
         <nav className="tabs">
-          <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
+          <button className={view.name === "home" || view.name === "settings" ? "on" : ""} onClick={() => setView({ name: "home" })}>
             <IconChat />
             클론
           </button>
@@ -724,10 +724,6 @@ export default function App() {
           <button className={view.name === "calendar" ? "on" : ""} onClick={() => setView({ name: "calendar" })}>
             <IconCalendar />
             캘린더
-          </button>
-          <button className={view.name === "settings" ? "on" : ""} onClick={() => setView({ name: "settings" })}>
-            <IconSettings />
-            설정
           </button>
         </nav>
       )}
@@ -762,6 +758,44 @@ const saveBrief = (c: BriefCache) => {
     /* 무시 */
   }
 };
+
+// 브리핑 한 줄의 날짜는 글 앞에 쓰지 않고 색 박스로 따로 보여 준다.
+// 예전에 만든 브리핑처럼 글 앞에 날짜가 붙어 있으면 떼어 내서 박스로 옮긴다.
+function briefDate(m: { text: string; date?: string }): { date: string; text: string } {
+  const now = new Date();
+  const y = now.getFullYear();
+  const lead = /^\s*(오늘|내일|모레|(\d{1,2})\s*(?:\/|\.|월\s*)(\d{1,2})일?)(?:\s*\([월화수목금토일]\))?\s*[,:·-]?\s*/;
+  const hit = m.text.match(lead);
+  let date = m.date && /^\d{4}-\d{2}-\d{2}$/.test(m.date) ? m.date : "";
+  let text = m.text;
+  if (hit && hit[0].length < m.text.length) {
+    text = m.text.slice(hit[0].length);
+    if (!date) {
+      const add = { 오늘: 0, 내일: 1, 모레: 2 }[hit[1] as "오늘"];
+      if (add !== undefined) date = ymd(new Date(y, now.getMonth(), now.getDate() + add));
+      else {
+        const mo = +hit[2], d = +hit[3];
+        // 지금보다 몇 달 이상 앞선 날짜면 내년으로 본다 (12월에 1월 일정을 말할 때)
+        const guess = new Date(mo < now.getMonth() - 5 ? y + 1 : y, mo - 1, d);
+        date = ymd(guess);
+      }
+    }
+  }
+  return { date, text };
+}
+
+function BriefText({ m }: { m: { text: string; date?: string } }) {
+  const { date, text } = briefDate(m);
+  if (!date) return <span className="grow">{m.text}</span>;
+  const n = daysUntil(date) ?? 99;
+  const label = n === 0 ? "오늘" : n === 1 ? "내일" : `${+date.slice(5, 7)}/${+date.slice(8, 10)}`;
+  return (
+    <span className="grow brief-row">
+      <span className={`date-chip ${n <= 0 ? "due" : n <= 3 ? "soon" : ""}`}>{label}</span>
+      <span>{text}</span>
+    </span>
+  );
+}
 
 function HomeChat(props: {
   otherChats: HomeThread[];
@@ -891,7 +925,7 @@ function HomeChat(props: {
               <p className="label warn">놓친 것</p>
               {brief.missed.map((m, i) => (
                 <button key={i} className="bline" onClick={() => settings.apiKey && ask(m.text)}>
-                  {m.text}
+                  <BriefText m={m} />
                 </button>
               ))}
             </div>
@@ -910,7 +944,7 @@ function HomeChat(props: {
                     onTap={() => settings.apiKey && ask(m.text)}
                     actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
                   >
-                    <span className="grow">{m.text}</span>
+                    <BriefText m={m} />
                   </SwipeRow>
                 ))}
               </ul>
@@ -933,9 +967,14 @@ function HomeChat(props: {
           <IconMenu />
         </button>
         <strong onClick={tapTitle}>클론</strong>
-        <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
-          <IconCompose />
-        </button>
+        <span className="head-right">
+          <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
+            <IconCompose />
+          </button>
+          <button className="icon-btn" aria-label="설정" onClick={props.onGoSettings}>
+            <IconSettings />
+          </button>
+        </span>
       </header>
       {props.calExpired && (
         <button className="reconnect" onClick={props.onReconnect}>
@@ -1923,6 +1962,7 @@ function SettingsView(props: {
   onConnect: () => void;
   onDisconnect: () => void;
   onCalendarsChanged: () => void;
+  onBack: () => void;
 }) {
   const [page, setPage] = useState<SettingsPage>("main");
   const { settings } = props;
@@ -1932,8 +1972,12 @@ function SettingsView(props: {
     return (
       <section className="settings">
         <header className="page-head">
-          <h1>설정</h1>
+          <button className="back" onClick={props.onBack}>
+            <IconBack />
+            클론
+          </button>
         </header>
+        <h1 className="settings-title">설정</h1>
         <ul className="menu">
           <li onClick={() => setPage("claude")}>
             <span className="grow">

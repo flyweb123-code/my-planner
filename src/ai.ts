@@ -437,8 +437,8 @@ export async function checkKey(s: Settings): Promise<string> {
 
 const Briefing = z.object({
   now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 40자 안팎 한 줄 (예: '타이레놀 기획안: 심의 접수 서류 마무리하기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
-  missed: z.array(z.object({ text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 핵심 내용(날짜·무엇을)이 보이게 40자 안팎 한 줄 (예: '10/26 하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
-  check: z.array(z.object({ text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 핵심 내용(날짜·무엇을)이 보이게 40자 안팎 한 줄 (예: '10/26 하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
+  missed: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
+  check: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
 });
 export type Briefing = z.infer<typeof Briefing>;
 
@@ -478,7 +478,7 @@ export function simpleBriefing(items: Item[], events: CalEvent[] = []): Briefing
   // 할 일과 이어지지 않은 캘린더 일정 중 오늘~일주일 안의 것
   const calSoon = events
     .filter((e) => !e.itemId && e.date >= today && e.date <= soon)
-    .map((e) => ({ text: `${e.date === today ? "오늘" : e.date.slice(5).replace("-", "/")} ${e.time || ""} '${e.title}' 일정이 있어요.`.replace(/\s+/g, " "), item_id: "" }));
+    .map((e) => ({ date: e.date, text: `${e.time ? e.time + " " : ""}'${e.title}' 일정이 있어요.`, item_id: "" }));
   const byDue = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
   const first = byDue[0];
   const week = Date.now() - 7 * 86400000;
@@ -489,11 +489,11 @@ export function simpleBriefing(items: Item[], events: CalEvent[] = []): Briefing
     missed: open
       .filter((i) => i.due && i.due < today)
       .slice(0, 3)
-      .map((i) => ({ text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id })),
+      .map((i) => ({ date: i.due, text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id })),
     check: [
       ...(first ? calSoon : calSoon.slice(1)),
-      ...open.filter((i) => i.updatedAt < week).map((i) => ({ text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
-      ...open.filter((i) => !i.due).map((i) => ({ text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id })),
+      ...open.filter((i) => i.updatedAt < week).map((i) => ({ date: i.due, text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
+      ...open.filter((i) => !i.due).map((i) => ({ date: "", text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id })),
     ].slice(0, 3),
   };
 }
