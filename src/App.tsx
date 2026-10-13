@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, uid, usePersisted, wasDeletedByUser } from "./store";
+import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, markSeen, seenCount, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
@@ -1583,60 +1583,68 @@ function ItemView(props: {
   );
 }
 
-/* 세부 업무 목록: 할 일 화면과 일정 화면이 같이 쓴다. item은 할 일이거나, 할 일과 안 이어진 일정의 대화용 항목 */
+/* 세부 업무 목록: 할 일 화면과 일정 화면이 같이 쓴다. item은 할 일이거나, 할 일과 안 이어진 일정의 대화용 항목.
+   세부 업무마다 따로 박스, 누르면 세부 업무 화면. 왼쪽으로 밀면 완료/삭제. 아래 ⊕ 버튼으로 추가. */
 function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: (it: Item) => Item) => void; onOpenSub: (subId: string) => void }) {
   const [newSub, setNewSub] = useState("");
+  const [adding, setAdding] = useState(false);
   const [swiped, setSwiped] = useState<string | null>(null);
-  const plain = (t: string) => t.replace(/[*`#]/g, "");
   const addSub = (title: string) =>
     update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
   const toggleSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
   const removeSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== id) }));
+  const submit = () => {
+    const t = newSub.trim();
+    if (t) addSub(t);
+    setNewSub("");
+    setAdding(false);
+  };
   return (
     <div className="subtask-section" onClick={() => setSwiped(null)}>
       <div className="section-head">
         <h3>세부 업무</h3>
-        {item.subtasks.length > 0 && <span className="muted small">왼쪽으로 밀면 완료, 삭제</span>}
       </div>
-      <ul className="threads">
-        {item.subtasks.map((s) => {
-          const lm = s.chat?.[s.chat.length - 1];
-          return (
-            <SwipeRow
-              key={s.id}
-              open={swiped === s.id}
-              onOpenChange={(o) => setSwiped(o ? s.id : null)}
-              onTap={() => onOpenSub(s.id)}
-              actions={[
-                { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
-                { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
-              ]}
-            >
-              <span className={`tick ${s.done ? "on" : ""}`}>{s.done && <IconCheck />}</span>
-              <span className="grow">
-                <span className={`t ${s.done ? "done" : ""}`}>{s.title}</span>
-                <span className="preview">{lm ? plain(lm.text) : s.done ? "완료" : "눌러서 클론과 정하기"}</span>
-              </span>
-              {s.chat && s.chat.length > 0 && <span className="count">{s.chat.length}</span>}
-            </SwipeRow>
-          );
-        })}
-        <li className="add-row">
-          <IconPlus />
-          <input
-            placeholder="세부 업무 추가"
-            value={newSub}
-            onChange={(e) => setNewSub(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing && newSub.trim()) {
-                addSub(newSub.trim());
-                setNewSub("");
-              }
-            }}
-          />
-        </li>
+      <ul className="sub-cards">
+        {item.subtasks.map((s) => (
+          <SwipeRow
+            key={s.id}
+            open={swiped === s.id}
+            onOpenChange={(o) => setSwiped(o ? s.id : null)}
+            onTap={() => onOpenSub(s.id)}
+            actions={[
+              { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
+              { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
+            ]}
+          >
+            <span className={`tick ${s.done ? "on" : ""}`}>{s.done && <IconCheck />}</span>
+            <span className="grow">
+              <span className={`t ${s.done ? "done" : ""}`}>{s.title}</span>
+              {s.due && <span className="preview">{schedText(s as Sched)}</span>}
+            </span>
+            <span className="chev"><IconRight /></span>
+          </SwipeRow>
+        ))}
+        {adding && (
+          <li className="sub-new">
+            <input
+              autoFocus
+              placeholder="세부 업무 이름"
+              value={newSub}
+              onChange={(e) => setNewSub(e.target.value)}
+              onBlur={submit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) submit();
+                if (e.key === "Escape") (setNewSub(""), setAdding(false));
+              }}
+            />
+          </li>
+        )}
       </ul>
-      {item.subtasks.length === 0 && <p className="muted small hint">클론에게 물어보면 필요한 세부 업무를 나눠 줘요.</p>}
+      {!adding && (
+        <button className="sub-add" aria-label="세부 업무 추가" onClick={(e) => (e.stopPropagation(), setAdding(true))}>
+          <IconPlus />
+        </button>
+      )}
     </div>
   );
 }
@@ -1737,6 +1745,8 @@ function ChatView(props: {
     subId ? { ...it, subtasks: it.subtasks.map((s) => (s.id === subId ? { ...s, chat: fn(s.chat ?? []) } : s)) } : { ...it, chat: fn(it.chat) };
 
   useStickToBottom(endRef, [chat.length, streaming]);
+  // 이 화면에 떠 있는 메시지는 본 것으로 친다 (일정·세부 업무 화면의 말풍선 숫자가 사라지게)
+  useEffect(() => markSeen(subId ?? item.id, chat.length), [subId, item.id, chat.length]);
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
@@ -2469,7 +2479,7 @@ function EventEditor({
           </button>
         )}
         <div className="head-actions">
-          {!editing && <ChatIconButton count={chat.length} onClick={() => onChat()} label="이 일정에 대해 클론과 대화" />}
+          {!editing && <ChatIconButton count={Math.max(0, chat.length - seenCount(host?.item.id ?? "ev_" + ev.id))} onClick={() => onChat()} label="이 일정에 대해 클론과 대화" />}
           {!isNew && !readOnly && (
           <div className="menu-wrap">
             <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
@@ -2611,7 +2621,7 @@ function EventEditor({
   );
 }
 
-/* 일정·세부 업무 화면 위쪽의 클론 대화 버튼. 나눈 대화 수를 작은 숫자로 보여 준다. */
+/* 일정·세부 업무 화면 위쪽의 클론 대화 버튼. 아직 안 본 메시지 수를 작은 숫자로 보여 준다. */
 function ChatIconButton({ count, onClick, label }: { count: number; onClick: () => void; label: string }) {
   return (
     <button className="icon-btn chat-icon" aria-label={label} onClick={(e) => (e.stopPropagation(), onClick())}>
@@ -2644,7 +2654,7 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
           {item.title.length > 12 ? item.title.slice(0, 12) + "…" : item.title}
         </button>
         <div className="head-actions">
-          {!editing && <ChatIconButton count={chat.length} onClick={props.onChat} label="이 세부 업무에 대해 클론과 대화" />}
+          {!editing && <ChatIconButton count={Math.max(0, chat.length - seenCount(sub.id))} onClick={props.onChat} label="이 세부 업무에 대해 클론과 대화" />}
           <div className="menu-wrap">
             <button className="icon-btn" aria-label="더 보기" onClick={(e) => (e.stopPropagation(), setMenu(!menu), setConfirmDel(false))}>
               <IconMore />
@@ -2665,6 +2675,7 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
         <>
           <input className="title-input" placeholder="세부 업무 이름" value={sub.title} onChange={(e) => set({ title: e.target.value })} />
           <div className="fields">
+            <ScheduleEditor item={{ due: sub.due ?? "", time: sub.time, endDate: sub.endDate, endTime: sub.endTime }} update={(fn) => set(fn({ due: sub.due ?? "", time: sub.time, endDate: sub.endDate, endTime: sub.endTime }))} />
             <div className="field memo">
               <textarea placeholder="메모 추가" value={sub.note ?? ""} onChange={(e) => set({ note: e.target.value })} />
             </div>
@@ -2675,30 +2686,25 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
         </>
       ) : (
         <>
-          <h1 className={`title-view ${sub.done ? "is-done" : ""}`}>{sub.title || "(이름 없음)"}</h1>
+          <h1 className={`title-view ${sub.done ? "is-done" : ""}`}>
+            {sub.title || "(이름 없음)"}
+            {sub.done && <span className="pill-done">완료</span>}
+          </h1>
           <div className="fields event-info">
-            <div className="field">
-              <span className={`tick ${sub.done ? "on" : ""}`}>{sub.done && <IconCheck />}</span>
-              <span className="grow">{sub.done ? "완료" : "진행 중"}</span>
-            </div>
-            <div className="field" onClick={props.onBack} style={{ cursor: "pointer" }}>
-              <span className="info-label">할 일</span>
-              <span className="grow">{item.title}</span>
-            </div>
-            {sub.note && (
-              <div className="field info-desc">
-                <span className="info-label">메모</span>
-                <span className="grow">{sub.note}</span>
-              </div>
-            )}
+            <button className="field tap-field" onClick={() => setEditing(true)} aria-label="일정 수정">
+              <span className="sched-icon"><IconClock /></span>
+              <span className={`grow ${sub.due ? "" : "muted"}`}>{sub.due ? schedText(sub as Sched) : "일정 추가"}</span>
+              <span className="chev"><IconRight /></span>
+            </button>
+            <button className="field tap-field info-desc" onClick={() => setEditing(true)} aria-label="메모 수정">
+              <span className="info-label">메모</span>
+              <span className={`grow ${sub.note ? "" : "muted"}`}>{sub.note || "메모 추가"}</span>
+              <span className="chev"><IconRight /></span>
+            </button>
           </div>
           <EventFiles owner={sub.id} />
         </>
       )}
-      <button className={`wide add-todo ${sub.done ? "secondary" : ""}`} onClick={toggle}>
-        {sub.done ? "완료 취소" : "완료로 표시"}
-      </button>
-      <p className="muted small hint">이름과 메모는 오른쪽 위 ⋯ → 수정에서 바꿀 수 있어요. 클론과 대화하려면 말풍선을 누르세요.</p>
     </section>
   );
 }

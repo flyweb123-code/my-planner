@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "./toast";
 
-export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string };
+export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string; due?: string; time?: string; endDate?: string; endTime?: string };
 export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; eventId?: string; calendarId?: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
 export type Msg = {
   role: "user" | "assistant";
@@ -133,4 +133,24 @@ export function itemEnd(it: Pick<Item, "due" | "time" | "endDate" | "endTime">):
     if (`${date}T${it.endTime}` > `${it.due}T${it.time}`) return { date, time: it.endTime };
   }
   return addMinutes(it.due, it.time, 60);
+}
+
+// 대화별로 마지막으로 본 메시지 수 (말풍선 아이콘의 숫자 = 아직 안 본 메시지)
+const SEEN_KEY = "chatSeen";
+const seenMap = (): Record<string, number> => {
+  try {
+    return JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+};
+export const seenCount = (chatKey: string) => seenMap()[chatKey] ?? 0;
+export function markSeen(chatKey: string, n: number) {
+  const m = seenMap();
+  if (m[chatKey] === n) return;
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify({ ...m, [chatKey]: n }));
+  } catch {
+    /* 무시 */
+  }
 }

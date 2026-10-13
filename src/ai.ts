@@ -30,7 +30,7 @@ function talkNotes(it: Item, perChat: number, maxLen: number, skip?: string) {
 
 function describeItem(it: Item, notes?: { perChat: number; maxLen: number; skip?: string }) {
   const subs = it.subtasks.length
-    ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}${s.note ? ` (메모: ${s.note.replace(/\s+/g, " ").slice(0, 300)})` : ""}`).join("\n")
+    ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}${s.due ? ` (${s.due}${s.time ? " " + s.time : ""})` : ""}${s.note ? ` (메모: ${s.note.replace(/\s+/g, " ").slice(0, 300)})` : ""}`).join("\n")
     : "  (아직 없음)";
   return `제목: ${it.title}\n일정: ${it.due || "없음"}${it.time ? " " + it.time + (it.endTime ? "~" + it.endTime : "") : ""}${!it.time && it.endDate && it.endDate !== it.due ? " ~ " + it.endDate : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}${notes ? talkNotes(it, notes.perChat, notes.maxLen, notes.skip) : ""}`;
 }
@@ -110,7 +110,7 @@ const eventsText = (events: CalEvent[], max = 80, ids = false, full = false) => 
       // 일정 대화에서 나온 세부 업무와 그 기록
       const subs = (e.subtasks ?? []).map((x) => {
         const talk = x.chat?.length ? `\n        대화: ` + x.chat.slice(full ? -4 : -2).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 200 : 150)}`).join(" / ") : "";
-        return `      - [${x.done ? "x" : " "}] ${x.title}${x.note ? ` (메모: ${clip(x.note, 300)})` : ""}${talk}`;
+        return `      - [${x.done ? "x" : " "}] ${x.title}${x.due ? ` (${x.due}${x.time ? " " + x.time : ""})` : ""}${x.note ? ` (메모: ${clip(x.note, 300)})` : ""}${talk}`;
       });
       return `- ${ids ? `[event_id=${e.id}] ` : ""}${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}${subs.length ? "\n    세부 업무:\n" + subs.join("\n") : ""}`;
     })
