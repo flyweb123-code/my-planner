@@ -575,6 +575,7 @@ export default function App() {
             onConnect={connectCalendar}
             onOpen={open}
             onAddTodo={addEventAsTodo}
+            onCalendarsChanged={loadEvents}
             onEventSaved={(ev, d) => {
               // 할 일과 이어진 일정을 고쳤으면 할 일도 같은 날짜·시간·색으로 맞춘다 (다시 덮어쓰지 않게)
               const it = itemsRef.current.find((i) => i.calendarEventId === ev.id);
@@ -2301,6 +2302,23 @@ function EventEditor({
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(!!isNew);
   const [confirmDel, setConfirmDel] = useState(false);
+  // 수정 화면에서 뒤로 가면 고친 내용은 버리고 원래 일정 화면으로 돌아간다
+  const cancelEdit = () => {
+    setEditing(false);
+    setD(original);
+  };
+  // 휴대폰 뒤로가기(제스처)도 수정만 끝내고 일정 화면에 머물게 기록을 하나 쌓아 둔다
+  useEffect(() => {
+    if (!editing || isNew) return;
+    history.pushState({ evEdit: true }, "");
+    const onPop = () => cancelEdit();
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (history.state?.evEdit) history.back();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
     setBusy(true);
     try {
@@ -2319,10 +2337,17 @@ function EventEditor({
   return (
     <section className="detail event-edit" onClick={() => (setMenu(false), setConfirmDel(false))}>
       <header className="page-head">
-        <button className="back" onClick={onClose}>
-          <IconBack />
-          캘린더
-        </button>
+        {editing && !isNew ? (
+          <button className="back" onClick={cancelEdit}>
+            <IconBack />
+            일정
+          </button>
+        ) : (
+          <button className="back" onClick={onClose}>
+            <IconBack />
+            캘린더
+          </button>
+        )}
         <div className="head-actions">
           {!editing && <ChatIconButton count={chat.length} onClick={() => onChat()} label="이 일정에 대해 클론과 대화" />}
           {!isNew && !readOnly && (
@@ -2386,8 +2411,7 @@ function EventEditor({
           <EditPanel
             onDone={() => {
               if (isNew) return onClose();
-              setEditing(false);
-              setD(original);
+              cancelEdit();
             }}
             doneLabel="취소"
             title={isNew ? "새 일정" : "수정"}
@@ -2725,6 +2749,7 @@ function CalendarView(props: {
   onChat: (ev: CalEvent, initial?: string) => void;
   onEventSaved: (ev: CalEvent, d: gcal.EventEdit) => void;
   onGoSettings: () => void;
+  onCalendarsChanged: () => void;
 }) {
   const today = ymd(new Date());
   const [mode, setMode] = useState<"month" | "list">(() => {
@@ -2763,7 +2788,10 @@ function CalendarView(props: {
   const [shown, setShown] = useState(() => ({ key: rangeKey, events: fromCache() }));
   // 달을 넘기면 그 달의 저장본으로 즉시 바꾼다 (그리는 중에 바로 바꿔서 빈 화면이 한 번도 안 보이게).
   if (shown.key !== rangeKey) setShown({ key: rangeKey, events: fromCache() });
-  const events = shown.events;
+  // 구글 캘린더 목록(그룹)별로 달력에서 바로 켜고 끈다. 끈 캘린더 일정은 바로 숨긴다.
+  const [cals, setCals] = useState(gcal.cachedCalendars());
+  const hidden = new Set(cals.filter((c) => !c.shown).map((c) => c.id));
+  const events = shown.events.filter((e) => !e.calendarId || !hidden.has(e.calendarId));
 
   const latest = useRef(rangeKey);
   latest.current = rangeKey;
@@ -2777,6 +2805,7 @@ function CalendarView(props: {
       .then((evs) => {
         // 받아 오는 사이에 다른 달로 넘어갔으면 이 결과는 저장만 하고 화면에는 안 쓴다.
         if (latest.current === key) setShown({ key, events: evs });
+        setCals(gcal.cachedCalendars());
       })
       .catch((e) => toast((e as Error).message))
       .finally(() => latest.current === key && setLoading(false));
@@ -2790,6 +2819,12 @@ function CalendarView(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.gToken, rangeKey]);
   useEffect(load, [load]);
+  const toggleCal = (id: string, on: boolean) => {
+    gcal.setShown(id, on);
+    setCals(gcal.cachedCalendars());
+    load(); // 켠 캘린더 일정을 받아 온다
+    props.onCalendarsChanged();
+  };
 
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
@@ -2934,6 +2969,17 @@ function CalendarView(props: {
           <button className="btn small" onClick={props.onConnect}>
             다시 연결
           </button>
+        </div>
+      )}
+
+      {props.calOn && cals.length > 1 && (
+        <div className="cal-chips cal-filter" role="group" aria-label="보이는 캘린더">
+          {cals.map((c) => (
+            <button key={c.id} className={`cal-chip ${c.shown ? "on" : ""}`} aria-pressed={c.shown} onClick={() => toggleCal(c.id, !c.shown)}>
+              <span className="swatch tiny" style={{ background: c.shown ? c.color : "transparent", boxShadow: `inset 0 0 0 1.5px ${c.color}` }} />
+              {c.name}
+            </button>
+          ))}
         </div>
       )}
 
