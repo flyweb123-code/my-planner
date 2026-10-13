@@ -30,7 +30,7 @@ function talkNotes(it: Item, perChat: number, maxLen: number, skip?: string) {
 
 function describeItem(it: Item, notes?: { perChat: number; maxLen: number; skip?: string }) {
   const subs = it.subtasks.length
-    ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}`).join("\n")
+    ? it.subtasks.map((s) => `  - [${s.done ? "x" : " "}] ${s.title}${s.note ? ` (메모: ${s.note.replace(/\s+/g, " ").slice(0, 300)})` : ""}`).join("\n")
     : "  (아직 없음)";
   return `제목: ${it.title}\n일정: ${it.due || "없음"}${it.time ? " " + it.time + (it.endTime ? "~" + it.endTime : "") : ""}${!it.time && it.endDate && it.endDate !== it.due ? " ~ " + it.endDate : ""}\n메모: ${it.note || "없음"}\n세부 업무:\n${subs}${notes ? talkNotes(it, notes.perChat, notes.maxLen, notes.skip) : ""}`;
 }
@@ -88,7 +88,7 @@ const suggestTool = {
 export type World = { items: Item[]; events: CalEvent[]; home: Msg[] };
 
 // 캘린더 일정은 제목뿐 아니라 기간, 장소, 설명(메모)까지 읽게 한다. 마감·준비물 같은 내용이 설명에 들어 있는 경우가 많다.
-const eventsText = (events: CalEvent[], max = 80, ids = false) => {
+const eventsText = (events: CalEvent[], max = 80, ids = false, full = false) => {
   if (!events.length) return "(연결 안 됨 또는 일정 없음)";
   const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + "…" : t).replace(/\s+/g, " ").trim();
   return events
@@ -101,9 +101,14 @@ const eventsText = (events: CalEvent[], max = 80, ids = false) => {
         e.itemId ? "(할 일 목록에도 있음)" : "",
         e.location ? `장소: ${clip(e.location, 80)}` : "",
         e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
-        e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(-3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, 150)}`).join(" / ") : "",
+        e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(full ? -20 : -3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 500 : 150)}`).join(" / ") : "",
       ].filter(Boolean);
-      return `- ${ids ? `[event_id=${e.id}] ` : ""}${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}`;
+      // 일정 대화에서 나온 세부 업무와 그 기록
+      const subs = (e.subtasks ?? []).map((x) => {
+        const talk = x.chat?.length ? `\n        대화: ` + x.chat.slice(full ? -20 : -2).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, full ? 500 : 150)}`).join(" / ") : "";
+        return `      - [${x.done ? "x" : " "}] ${x.title}${x.note ? ` (메모: ${clip(x.note, 300)})` : ""}${talk}`;
+      });
+      return `- ${ids ? `[event_id=${e.id}] ` : ""}${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}${subs.length ? "\n    세부 업무:\n" + subs.join("\n") : ""}`;
     })
     .join("\n");
 };
@@ -430,8 +435,8 @@ export type Briefing = z.infer<typeof Briefing>;
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
   const itemsText =
-    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 2, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
-  const evText = eventsText(events, 60);
+    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 20, maxLen: 500 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
+  const evText = eventsText(events, 60, false, true);
   const res = await client(s).messages.parse({
     model: s.model,
     max_tokens: 16000,
@@ -441,6 +446,8 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
       "지금 시각을 꼭 고려한다(새벽이면 쉬라고 하거나 아침에 할 일을 알려 주는 식). 각 문장은 짧고 친근한 한국어로. " +
       "할 일 목록뿐 아니라 구글 캘린더 일정도 함께 보고 추천한다. 캘린더 일정의 설명에 적힌 마감, 준비할 것도 읽고, " +
       "곧 다가오는 일정(마감, 약속, 제출일)은 미리 준비할 것을 '확인할 것'이나 '지금'에 넣는다. 오늘 있는 일정은 시간에 맞춰 알려 준다. " +
+      "할 일과 일정 안의 세부 업무도 하나하나 본다: 끝낸 것([x])과 남은 것, 세부 업무 메모, 할 일·세부 업무·일정에서 나눈 대화 기록을 모두 읽고, " +
+      "대화에서 정한 것이나 하기로 한 것을 반영해 '다음에 할 세부 업무'를 구체적으로 짚는다(예: '드레스 투어 전에 원하는 스타일 사진 정리하기'). 이미 끝낸 세부 업무는 다시 권하지 않는다. " +
       "캘린더 일정에서 나온 제안은 item_id를 빈 문자열로 두되, '(할 일 목록에도 있음)' 표시가 있으면 할 일 쪽 항목으로 다룬다. " +
       "할 일과 캘린더 일정이 모두 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
     messages: [{ role: "user", content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}` }],

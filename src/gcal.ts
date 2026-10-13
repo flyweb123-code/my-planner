@@ -2,7 +2,7 @@
 // 권한은 1시간짜리다. 연결 유지 서버(server/worker.js)를 설정하면 그 서버가 대신
 // 새 권한을 받아 와서 계속 연결된 채로 있고, 없으면 만료될 때 버튼 한 번으로 다시 받는다.
 import { GOOGLE_CLIENT_ID } from "./config";
-import { itemEnd, type Msg } from "./store";
+import { itemEnd, type Msg, type Subtask } from "./store";
 
 type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type TokenClient = { requestAccessToken: (o?: { prompt?: string }) => void };
@@ -223,6 +223,7 @@ export type CalEvent = {
   itemId?: string; // 이 앱의 할 일에서 만든 일정이면 그 할 일 id
   colorId?: string; // 구글 캘린더 일정 색 번호("1"~"11"). 없으면 캘린더 기본 색
   chat?: Msg[]; // 이 일정에 대해 클론과 나눈 대화 (앱에만 저장)
+  subtasks?: Subtask[]; // 이 일정 대화에서 나온 세부 업무 (앱에만 저장)
 };
 
 // 구글 캘린더 일정 색(colorId)과 구글 앱에서 보이는 이름·색

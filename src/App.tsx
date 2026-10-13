@@ -68,7 +68,10 @@ export default function App() {
   useEffect(() => {
     if (view.name === "calendar" && reopenEvent) setReopenEvent(null);
   }, [view.name, reopenEvent]);
-  const aiEvents = events.map((e) => (eventChats[e.id]?.chat.length ? { ...e, chat: eventChats[e.id].chat } : e));
+  const aiEvents = events.map((e) => {
+    const c = eventChats[e.id];
+    return c && (c.chat.length || c.subtasks.length) ? { ...e, chat: c.chat, subtasks: c.subtasks } : e;
+  });
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
@@ -730,7 +733,11 @@ function HomeChat(props: {
   const [fresh] = useState(chat.length === 0);
   // 저장해 둔 브리핑이 없으면 이 기기에서 바로 만들 수 있는 간단한 브리핑부터 보여 준다.
   const [brief, setBrief] = useState<Briefing>(() => briefCache?.brief ?? simpleBriefing(items, events));
-  const evKey = events.map((e) => `${e.id}|${e.title}|${e.date}|${e.time}`).join(",");
+  // 일정이나 할 일(세부 업무 포함)이 바뀌면 브리핑을 새로 만든다
+  const evKey =
+    events.map((e) => `${e.id}|${e.title}|${e.date}|${e.time}|${e.subtasks?.length ?? 0}|${e.chat?.length ?? 0}`).join(",") +
+    "#" +
+    items.map((i) => `${i.id}:${i.updatedAt}`).join(",");
   useEffect(() => {
     if (!settings.apiKey) return setBrief(simpleBriefing(items, events));
     if (briefCache && briefCache.evKey === evKey && Date.now() - briefCache.at < 30 * 60000) return;
