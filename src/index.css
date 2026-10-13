@@ -216,7 +216,6 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .cell.today .num { background: var(--accent); color: var(--accent-ink) !important; }
 .cell.sel { background: color-mix(in srgb, var(--accent-soft) 70%, transparent); }
 .chip-ev { flex-shrink: 0; display: block; font-size: 10.5px; line-height: 1.35; font-weight: 600; padding: 1px 4px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: clip; background: var(--accent-soft); color: var(--accent); }
-.chip-ev.todo { background: var(--todo-soft); color: var(--todo); }
 .more { flex-shrink: 0; font-size: 10px; color: var(--muted); padding-left: 4px; font-weight: 600; }
 .day-panel h3 { margin-top: 24px; }
 .day-panel h3.is-today { color: var(--accent); }
@@ -225,7 +224,6 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .ev:first-child { border-top: 0; }
 .ev.todo { cursor: pointer; }
 .ev-bar { width: 4px; align-self: stretch; border-radius: 2px; background: var(--accent); flex: 0 0 4px; }
-.ev.todo .ev-bar { background: var(--todo); }
 .ev-time { flex: 0 0 40px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ev-title { flex: 1; min-width: 0; font-weight: 500; }
 .ev .tag { background: var(--todo-soft); color: var(--todo); }
@@ -456,3 +454,8 @@ html.chat-lock .app { min-height: 0; }
 .swatches .swatch.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text); }
 .swatch.default { background: var(--accent); position: relative; }
 .swatch.default::after { content: "기본"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 9.5px; font-weight: 700; color: #fff; }
+
+/* 할 일 목록에도 있는 일정: 색은 그대로 두고 제목 앞에 빨간 점 */
+.todo-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #e5484d; margin-right: 4px; vertical-align: middle; position: relative; top: -1px; flex: 0 0 auto; }
+.ev-title .todo-dot { width: 7px; height: 7px; margin-right: 6px; }
+.event-edit .ask { margin-top: 14px; }

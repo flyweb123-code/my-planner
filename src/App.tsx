@@ -12,7 +12,7 @@ import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, Ic
 import * as files from "./files";
 import { demoItems } from "./demo";
 
-type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
+type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "evchat"; ev: CalEvent; initial?: string } | { name: "settings" };
 
 export default function App() {
   const [items, setItems] = usePersisted<Item[]>("items", import.meta.env.VITE_DEMO ? demoItems() : []);
@@ -56,6 +56,15 @@ export default function App() {
     .slice(-6);
   const [view, setView] = useState<View>({ name: "home" });
   const [events, setEvents] = useState<CalEvent[]>([]);
+  // 캘린더 일정마다 클론과 나눈 대화 (구글 일정 id → 대화용 항목). 할 일 목록과는 따로 둔다.
+  const [eventChats, setEventChats] = usePersisted<Record<string, Item>>("eventChats", {});
+  // 클론이 보는 일정에는 일정별 대화도 붙여서 넘긴다
+  // 일정 대화에서 돌아오면 그 일정 편집 화면을 다시 연다
+  const [reopenEvent, setReopenEvent] = useState<CalEvent | null>(null);
+  useEffect(() => {
+    if (view.name === "calendar" && reopenEvent) setReopenEvent(null);
+  }, [view.name, reopenEvent]);
+  const aiEvents = events.map((e) => (eventChats[e.id]?.chat.length ? { ...e, chat: eventChats[e.id].chat } : e));
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
@@ -312,8 +321,8 @@ export default function App() {
       done: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      subtasks: [],
-      chat: [],
+      subtasks: eventChats[ev.id]?.subtasks ?? [],
+      chat: eventChats[ev.id]?.chat ?? [],
       calendarEventId: ev.id,
     };
     it.calSynced = syncKey(it);
@@ -422,14 +431,14 @@ export default function App() {
   const current = view.name === "item" || view.name === "chat" ? items.find((i) => i.id === view.id) : undefined;
 
   // 대화 화면이 떠 있는 동안에는 뒤쪽 문서가 스크롤되지 않게 잠근다.
-  const chatScreen = view.name === "home" || view.name === "chat";
+  const chatScreen = view.name === "home" || view.name === "chat" || view.name === "evchat";
   useEffect(() => {
     document.documentElement.classList.toggle("chat-lock", chatScreen);
     if (chatScreen) window.scrollTo(0, 0);
   }, [chatScreen]);
 
   return (
-    <div className={`app ${view.name === "chat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
+    <div className={`app ${view.name === "chat" || view.name === "evchat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
       <main>
         {view.name === "home" && (
           <HomeChat
@@ -437,7 +446,7 @@ export default function App() {
             onMenu={() => setDrawer(true)}
             onNewChat={() => setActiveId(uid())}
             items={items}
-            events={events}
+            events={aiEvents}
             settings={settings}
             calOn={calOn}
             calExpired={calExpired}
@@ -464,10 +473,36 @@ export default function App() {
           />
         )}
         {view.name === "chat" && current && (
-          <ChatView key={view.sub ?? "item"} world={{ items, events, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
+          <ChatView key={view.sub ?? "item"} world={{ items, events: aiEvents, home: recentHome }} item={current} subId={view.sub} initial={view.initial} settings={settings} update={(fn) => updateItem(current.id, fn)} onBack={() => setView({ name: "item", id: current.id })} />
         )}
         {view.name === "calendar" && (
-          <CalendarView items={items} gToken={gToken} calOn={calOn} linked={linked} onConnect={connectCalendar} onOpen={open} onAddTodo={addEventAsTodo} onGoSettings={() => setView({ name: "settings" })} />
+          <CalendarView
+            items={items}
+            gToken={gToken}
+            calOn={calOn}
+            linked={linked}
+            eventChats={eventChats}
+            reopen={reopenEvent}
+            onConnect={connectCalendar}
+            onOpen={open}
+            onAddTodo={addEventAsTodo}
+            onChat={(ev, initial) => setView({ name: "evchat", ev, initial })}
+            onGoSettings={() => setView({ name: "settings" })}
+          />
+        )}
+        {view.name === "evchat" && (
+          <ChatView
+            key={view.ev.id}
+            world={{ items, events: aiEvents, home: recentHome }}
+            item={eventChatItem(view.ev, eventChats[view.ev.id])}
+            initial={view.initial}
+            settings={settings}
+            update={(fn) => setEventChats((m) => ({ ...m, [view.ev.id]: fn(eventChatItem(view.ev, m[view.ev.id])) }))}
+            onBack={() => {
+              setReopenEvent(view.ev);
+              setView({ name: "calendar" });
+            }}
+          />
         )}
         {view.name === "settings" && (
           <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} onConnect={connectCalendar} onDisconnect={disconnectCalendar} />
@@ -496,7 +531,7 @@ export default function App() {
           onClose={() => setDrawer(false)}
         />
       )}
-      {view.name !== "chat" && (
+      {view.name !== "chat" && view.name !== "evchat" && (
         <nav className="tabs">
           <button className={view.name === "home" ? "on" : ""} onClick={() => setView({ name: "home" })}>
             <IconChat />
@@ -1949,12 +1984,53 @@ function DataSettings() {
 
 /* ---------------- 캘린더 ---------------- */
 
+// 캘린더 일정 하나를 클론과 대화할 수 있는 항목 모양으로 만든다. 제목·시간은 항상 구글 일정 기준.
+function eventChatItem(ev: CalEvent, saved?: Item): Item {
+  const note = ["[구글 캘린더 일정]", ev.location && `장소: ${ev.location}`, ev.description && ev.description !== "클론 앱에서 추가한 할 일" ? ev.description : ""].filter(Boolean).join("\n");
+  return {
+    id: "ev_" + ev.id,
+    title: ev.title,
+    note,
+    due: ev.date,
+    time: ev.time || undefined,
+    endDate: ev.endDate && ev.endDate !== ev.date ? ev.endDate : undefined,
+    endTime: ev.time && ev.endTime ? ev.endTime : undefined,
+    done: false,
+    createdAt: saved?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    subtasks: saved?.subtasks ?? [],
+    chat: saved?.chat ?? [],
+    calendarEventId: ev.id,
+  };
+}
+
 type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
 // 구글에서 색을 정한 일정은 그 색으로 칠한다
 const evColor = (e: DayEntry) => (e.color ? ({ "--ev": e.color } as React.CSSProperties) : undefined);
 
 /* 구글 일정 편집: 구글 캘린더 앱의 편집 화면과 같은 항목(제목, 종일, 시작/종료, 위치, 설명) */
-function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClose: () => void; onSaved: () => void; onAddTodo: () => void }) {
+function EventEditor({
+  ev,
+  chat,
+  onClose,
+  onSaved,
+  onAddTodo,
+  onChat,
+}: {
+  ev: CalEvent;
+  chat: Msg[];
+  onClose: () => void;
+  onSaved: () => void;
+  onAddTodo: () => void;
+  onChat: (initial?: string) => void;
+}) {
+  const [ask, setAsk] = useState("");
+  const last = chat[chat.length - 1];
+  const startAsk = () => {
+    if (!ask.trim()) return;
+    onChat(ask.trim());
+    setAsk("");
+  };
   const [d, setD] = useState<gcal.EventEdit>({
     title: ev.title,
     due: ev.date,
@@ -2036,6 +2112,33 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
           <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
         </div>
       </div>
+      <div className="ask">
+        <textarea
+          rows={1}
+          placeholder="이 일정에 대해 클론에게 물어보기"
+          value={ask}
+          onChange={(e) => setAsk(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              startAsk();
+            }
+          }}
+        />
+        <button className="send" aria-label="보내기" onClick={startAsk} disabled={!ask.trim()}>
+          <IconUp />
+        </button>
+      </div>
+      {last && (
+        <button className="resume" onClick={() => onChat()}>
+          <IconChat />
+          <span className="grow">
+            <strong>이 일정 대화</strong>
+            <span className="preview">{last.text.replace(/[*`#]/g, "")}</span>
+          </span>
+          <span className="chev"><IconRight /></span>
+        </button>
+      )}
       <EventFiles owner={ev.id} />
       <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
         할 일에 추가
@@ -2149,8 +2252,11 @@ function CalendarView(props: {
   calOn: boolean;
   linked: boolean;
   onConnect: () => void;
+  eventChats: Record<string, Item>;
+  reopen: CalEvent | null;
   onOpen: (id: string) => void;
   onAddTodo: (ev: CalEvent) => void;
+  onChat: (ev: CalEvent, initial?: string) => void;
   onGoSettings: () => void;
 }) {
   const today = ymd(new Date());
@@ -2168,7 +2274,7 @@ function CalendarView(props: {
   const [selected, setSelected] = useState(today);
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<CalEvent | null>(null);
+  const [editing, setEditing] = useState<CalEvent | null>(props.reopen);
 
   useEffect(() => {
     try {
@@ -2229,8 +2335,10 @@ function CalendarView(props: {
         {e.time ? e.time : "종일"}
         {e.time && e.endTime && <small>{e.endTime}</small>}
       </span>
-      <span className="ev-title">{e.title}</span>
-      {e.kind === "todo" && <span className="tag">할 일</span>}
+      <span className="ev-title">
+        {e.kind === "todo" && <span className="todo-dot" aria-label="할 일" />}
+        {e.title}
+      </span>
     </li>
   );
 
@@ -2240,6 +2348,8 @@ function CalendarView(props: {
         ev={editing}
         onClose={() => setEditing(null)}
         onAddTodo={() => props.onAddTodo(editing)}
+        chat={props.eventChats[editing.id]?.chat ?? []}
+        onChat={(initial) => props.onChat(editing, initial)}
         onSaved={() => {
           setEditing(null);
           load();
@@ -2319,6 +2429,7 @@ function CalendarView(props: {
                   <span className="num">{d.getDate()}</span>
                   {list.slice(0, 2).map((e) => (
                     <span key={e.key} className={`chip-ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)}>
+                      {e.kind === "todo" && <span className="todo-dot" />}
                       {e.title}
                     </span>
                   ))}

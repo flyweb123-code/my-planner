@@ -84,6 +84,7 @@ const eventsText = (events: CalEvent[], max = 80) => {
         e.itemId ? "(할 일 목록에도 있음)" : "",
         e.location ? `장소: ${clip(e.location, 80)}` : "",
         e.description && e.description !== "클론 앱에서 추가한 할 일" ? `설명: ${clip(e.description, 300)}` : "",
+        e.chat?.length ? "이 일정에 대해 클론과 나눈 대화: " + e.chat.slice(-3).map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text, 150)}`).join(" / ") : "",
       ].filter(Boolean);
       return `- ${when}: ${e.title}${extra.length ? "\n    " + extra.join(" / ") : ""}`;
     })
