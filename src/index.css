@@ -497,3 +497,6 @@ html.chat-lock .app { min-height: 0; }
 .day-head h3 { margin: 0; }
 .day-head .btn { display: inline-flex; align-items: center; gap: 4px; }
 .day-head .btn svg { width: 14px; height: 14px; }
+.event-info .tap-field { width: 100%; background: none; border: 0; border-radius: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.event-info .tap-field .chev { color: var(--faint); display: inline-flex; margin-left: auto; }
+.event-info .tap-field .chev svg { width: 16px; height: 16px; }

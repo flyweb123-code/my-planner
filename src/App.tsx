@@ -2350,10 +2350,11 @@ function EventEditor({
             {d.title || "(제목 없음)"}
           </h1>
           <div className="fields event-info">
-            <div className="field">
+            <button className="field tap-field" onClick={() => setEditing(true)} aria-label="시간 수정">
               <span className="sched-icon"><IconClock /></span>
               <span className="grow">{schedText(d)}</span>
-            </div>
+              <span className="chev"><IconRight /></span>
+            </button>
             {d.location && (
               <div className="field">
                 <span className="info-label">위치</span>
