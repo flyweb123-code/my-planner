@@ -8,7 +8,8 @@ import * as gcal from "./gcal";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose } from "./icons";
+import * as files from "./files";
 import { demoItems } from "./demo";
 
 type View = { name: "home" } | { name: "list" } | { name: "item"; id: string } | { name: "chat"; id: string; sub?: string; initial?: string } | { name: "calendar" } | { name: "settings" };
@@ -1985,14 +1986,32 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
           <IconBack />
           캘린더
         </button>
-        <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
-          저장
-        </button>
+        <div className="head-actions">
+          <button
+            className={`icon-btn del-btn${confirmDel ? " confirm" : ""}`}
+            aria-label={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+            title={confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+            disabled={busy}
+            onClick={() => {
+              if (!confirmDel) {
+                setConfirmDel(true);
+                return toast("한 번 더 누르면 일정을 삭제해요");
+              }
+              run(async (t) => {
+                await gcal.deleteEvent(t, ev.id);
+                await files.removeOwner(ev.id).catch(() => {});
+              }, "일정을 삭제했어요");
+            }}
+            onBlur={() => setConfirmDel(false)}
+          >
+            <IconTrash />
+          </button>
+          <button onClick={() => run((t) => gcal.updateEvent(t, ev.id, d), "구글 캘린더에 저장했어요")} disabled={busy || !d.title.trim()}>
+            저장
+          </button>
+        </div>
       </header>
       <input className="title-input" placeholder="제목 추가" value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
-      <button className="btn wide add-todo" disabled={busy} onClick={onAddTodo}>
-        할 일에 추가
-      </button>
       <div className="fields">
         <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
         <div className="field memo">
@@ -2002,16 +2021,105 @@ function EventEditor({ ev, onClose, onSaved, onAddTodo }: { ev: CalEvent; onClos
           <textarea placeholder="설명 추가" value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} />
         </div>
       </div>
-      <button
-        className="secondary danger-text wide"
-        disabled={busy}
-        onClick={() => (confirmDel ? run((t) => gcal.deleteEvent(t, ev.id), "일정을 삭제했어요") : setConfirmDel(true))}
-        onBlur={() => setConfirmDel(false)}
-      >
-        {confirmDel ? "한 번 더 누르면 삭제" : "일정 삭제"}
+      <EventFiles owner={ev.id} />
+      <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
+        할 일에 추가
       </button>
-      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요.</p>
+      <p className="muted small hint">저장하면 구글 캘린더에도 바로 바뀌어요. 첨부 파일은 이 기기에만 보관돼요.</p>
     </section>
+  );
+}
+
+/* 일정별 첨부 파일: 이 기기에 보관하고 눌러서 연다 */
+function EventFiles({ owner }: { owner: string }) {
+  const [list, setList] = useState<(files.Attachment & { url: string })[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  // 파일을 여는 임시 주소(blob:)는 목록을 새로 읽거나 화면을 떠날 때 정리
+  const listRef = useRef(list);
+  const reload = useCallback(() => {
+    files
+      .list(owner)
+      .then((all) => {
+        listRef.current.forEach((a) => URL.revokeObjectURL(a.url));
+        listRef.current = all.map((a) => ({ ...a, url: URL.createObjectURL(a.blob) }));
+        setList(listRef.current);
+      })
+      .catch((e) => toast((e as Error).message));
+  }, [owner]);
+  useEffect(reload, [reload]);
+  useEffect(() => () => listRef.current.forEach((a) => URL.revokeObjectURL(a.url)), []);
+
+  const addFiles = async (fl: FileList | null) => {
+    if (!fl?.length) return;
+    setBusy(true);
+    try {
+      for (const f of Array.from(fl)) await files.add(owner, f);
+      toast(fl.length > 1 ? `파일 ${fl.length}개를 첨부했어요` : "파일을 첨부했어요");
+    } catch (e) {
+      toast((e as Error).message || "파일을 저장하지 못했어요.");
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  };
+
+  return (
+    <div className="ev-files">
+      <div className="section-head">
+        <h3>첨부 파일</h3>
+        <label className={`filebtn small-btn${busy ? " busy" : ""}`}>
+          <IconClip />
+          {busy ? "올리는 중" : "파일 추가"}
+          <input
+            type="file"
+            multiple
+            disabled={busy}
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {list.length === 0 ? (
+        <p className="muted small empty-files">관련 문서나 사진을 올려 두면 여기서 바로 열어볼 수 있어요.</p>
+      ) : (
+        <ul className="threads file-list">
+          {list.map((a) => (
+            <li key={a.id}>
+              <a className="file-open" href={a.url} target="_blank" rel="noopener" download={/^(image|video|audio|text)\/|pdf$/.test(a.type) ? undefined : a.name}>
+                <span className="file-ico">
+                  {a.type.startsWith("image/") ? <img src={a.url} alt="" /> : <span>{(a.name.split(".").pop() || "파일").slice(0, 4).toUpperCase()}</span>}
+                </span>
+                <span className="grow">
+                  <strong>{a.name}</strong>
+                  <span className="preview">
+                    {files.sizeLabel(a.size)} · {new Date(a.added).toLocaleDateString("ko-KR")}
+                  </span>
+                </span>
+              </a>
+              <button
+                className={`icon-btn file-del${confirmId === a.id ? " confirm" : ""}`}
+                aria-label={confirmId === a.id ? "한 번 더 누르면 삭제" : "첨부 파일 삭제"}
+                onClick={() => {
+                  if (confirmId !== a.id) return setConfirmId(a.id);
+                  files
+                    .remove(a.id)
+                    .then(() => toast("첨부 파일을 지웠어요"))
+                    .catch((e) => toast((e as Error).message))
+                    .finally(reload);
+                }}
+                onBlur={() => setConfirmId(null)}
+              >
+                {confirmId === a.id ? <IconTrash /> : <IconClose />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
