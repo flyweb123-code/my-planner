@@ -1685,8 +1685,9 @@ const today = () => new Date().toLocaleDateString("sv-SE");
 // 일정 화면에서 보여 주는 날짜·시간 한 줄
 const schedText = (d: Pick<Item, "due" | "time" | "endDate" | "endTime">) => {
   const end = itemEnd(d);
-  if (!d.time) return end.date !== d.due ? `${fmtDay(d.due)} ~ ${fmtDay(end.date)} · 종일` : `${fmtDay(d.due)} · 종일`;
-  return end.date !== d.due ? `${fmtDay(d.due)} ${fmtTime(d.time)} ~ ${fmtDay(end.date)} ${fmtTime(end.time!)}` : `${fmtDay(d.due)} · ${fmtTime(d.time)} ~ ${fmtTime(end.time!)}`;
+  // 시작일과 끝나는 날이 다르면 두 줄로 나눠 칸 밖으로 넘치지 않게 한다
+  if (!d.time) return end.date !== d.due ? `${fmtDay(d.due)} ~\n${fmtDay(end.date)} · 종일` : `${fmtDay(d.due)} · 종일`;
+  return end.date !== d.due ? `${fmtDay(d.due)} ${fmtTime(d.time)} ~\n${fmtDay(end.date)} ${fmtTime(end.time!)}` : `${fmtDay(d.due)} · ${fmtTime(d.time)} ~ ${fmtTime(end.time!)}`;
 };
 
 // 글자를 누르면 그 자리에 숨겨 둔 날짜/시간 선택기가 열린다.
@@ -2666,7 +2667,14 @@ function eventChatItem(ev: CalEvent, saved?: Item): Item {
 // 일정 화면의 세부 업무·대화가 들어 있는 곳
 type EventHost = { item: Item; linked: boolean; update: (fn: (it: Item) => Item) => void; onOpenSub: (subId: string) => void; onChat: (initial?: string) => void };
 
-type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string };
+type DayEntry = { key: string; title: string; time: string; endTime: string; kind: "google" | "todo"; itemId?: string; ev?: CalEvent; color?: string; start: string; end: string };
+// 날짜 문자열(YYYY-MM-DD) 하루씩 더하기
+const addDay = (d: string, n: number) => {
+  const x = new Date(d + "T00:00:00");
+  x.setDate(x.getDate() + n);
+  return ymd(x);
+};
+const shortDay = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
 // 구글에서 색을 정한 일정은 그 색으로 칠한다
 // 일정 색을 따로 안 고른 일정은 그 캘린더(그룹) 색으로. 기본 캘린더는 앱 기본 색 그대로.
 const calColor = (calId?: string) => {
@@ -3294,16 +3302,33 @@ function CalendarView(props: {
 
   // 구글 일정 + 아직 캘린더에 안 올라간 할 일(연결 전이거나 올리는 중)
   const byDay = new Map<string, DayEntry[]>();
-  const push = (d: string, e: DayEntry) => byDay.set(d, [...(byDay.get(d) ?? []), e]);
+  // 여러 날에 걸친 일정은 걸친 날마다 넣는다 (아래 날짜별 목록용). 달력에서는 한 줄로 이어 그린다.
+  const push = (_d: string, e: DayEntry) => {
+    for (let d = e.start, n = 0; d <= e.end && n < 62; d = addDay(d, 1), n++) byDay.set(d, [...(byDay.get(d) ?? []), e]);
+  };
+  const entries: DayEntry[] = [];
   // 일정에 할 일 표시가 빠져 있어도(다른 캘린더로 옮긴 직후 등) 할 일 쪽에 적힌 일정 id로 이어 준다 → 같은 일정이 두 번 안 보이게
   const itemOfEvent = new Map(props.items.filter((i) => i.calendarEventId).map((i) => [i.calendarEventId!, i.id]));
   for (const e of events) {
     const itemId = e.itemId ?? itemOfEvent.get(e.id);
-    push(e.date, { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: itemId ? "todo" : "google", itemId, ev: itemId && !e.itemId ? { ...e, itemId } : e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId) });
+    const en: DayEntry = { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: itemId ? "todo" : "google", itemId, ev: itemId && !e.itemId ? { ...e, itemId } : e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId), start: e.date, end: e.endDate && e.endDate > e.date ? e.endDate : e.date };
+    entries.push(en);
+    push(e.date, en);
   }
   const synced = new Set(events.map((e) => e.itemId ?? itemOfEvent.get(e.id)).filter(Boolean));
-  for (const it of props.items) if (it.due && !it.done && !synced.has(it.id)) push(it.due, { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId) });
-  for (const list of byDay.values()) list.sort((a, b) => (a.time || "00:00").localeCompare(b.time || "00:00"));
+  for (const it of props.items)
+    if (it.due && !it.done && !synced.has(it.id)) {
+      const end = itemEnd(it).date;
+      const en: DayEntry = { key: it.id, title: it.title, time: it.time ?? "", endTime: "", kind: "todo", itemId: it.id, color: gcal.colorHex(it.colorId), start: it.due, end: end > it.due ? end : it.due };
+      entries.push(en);
+      push(it.due, en);
+    }
+  // 여러 날 일정을 먼저(길수록 위), 그다음 시간 순
+  const order = (a: DayEntry, b: DayEntry) => {
+    const la = a.end > a.start ? 1 : 0, lb = b.end > b.start ? 1 : 0;
+    return lb - la || a.start.localeCompare(b.start) || b.end.localeCompare(a.end) || (a.time || "00:00").localeCompare(b.time || "00:00");
+  };
+  for (const list of byDay.values()) list.sort(order);
 
   const [slide, setSlide] = useState<"" | "next" | "prev">("");
   const shift = (n: number) => {
@@ -3346,6 +3371,28 @@ function CalendarView(props: {
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   });
+  // 달력 칩 배치: 주(7칸)마다 일정을 줄(lane)에 차례로 넣는다. 칸 높이에 들어가는 줄 수만 그리고 나머지는 '+n'
+  const chipCount = rowH >= 68 ? 2 : rowH >= 48 ? 1 : 0;
+  const hiddenByDay = new Map<string, number>();
+  const weekBars: { e: DayEntry; from: number; to: number; lane: number; contL: boolean; contR: boolean }[][] = [];
+  for (let w = 0; w < cells.length / 7; w++) {
+    const days = cells.slice(w * 7, w * 7 + 7).map(ymd);
+    const first = days[0], last = days[6];
+    const inWeek = entries.filter((e) => e.start <= last && e.end >= first).sort(order);
+    const used: boolean[][] = [];
+    const bars: (typeof weekBars)[number] = [];
+    for (const e of inWeek) {
+      const from = Math.max(0, days.indexOf(e.start < first ? first : e.start));
+      const to = Math.min(6, e.end > last ? 6 : days.indexOf(e.end));
+      let lane = 0;
+      while (used[lane]?.slice(from, to + 1).some(Boolean)) lane++;
+      used[lane] ??= Array(7).fill(false);
+      for (let i = from; i <= to; i++) used[lane][i] = true;
+      if (lane < chipCount) bars.push({ e, from, to, lane, contL: e.start < first, contR: e.end > last });
+      else for (let i = from; i <= to; i++) hiddenByDay.set(days[i], (hiddenByDay.get(days[i]) ?? 0) + 1);
+    }
+    weekBars.push(bars);
+  }
   const goToday = () => {
     const d = new Date();
     setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -3359,12 +3406,21 @@ function CalendarView(props: {
     return d === today ? `오늘 · ${label}` : d === tomorrow ? `내일 · ${label}` : label;
   };
 
-  const Entry = ({ e }: { e: DayEntry }) => (
+  const Entry = ({ e, day }: { e: DayEntry; day: string }) => (
     <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}>
       <span className="ev-bar" />
       <span className="ev-time">
-        {e.time ? e.time : "종일"}
-        {e.time && e.endTime && <small>{e.endTime}</small>}
+        {e.end > e.start ? (
+          <>
+            {e.time ? (day === e.start ? e.time : "계속") : "종일"}
+            <small>~{shortDay(e.end)}</small>
+          </>
+        ) : (
+          <>
+            {e.time ? e.time : "종일"}
+            {e.time && e.endTime && <small>{e.endTime}</small>}
+          </>
+        )}
       </span>
       <span className="ev-title">
         {e.kind === "todo" && <span className="todo-dot" aria-label="할 일" />}
@@ -3502,14 +3558,14 @@ function CalendarView(props: {
             onPointerDown={(e) => e.pointerType === "mouse" && swipeStart(e.clientX, e.clientY)}
             onPointerUp={(e) => e.pointerType === "mouse" && swipeEnd(e.clientX, e.clientY)}
           >
-            {cells.map((d) => {
-              const chipCount = rowH >= 68 ? 2 : rowH >= 48 ? 1 : 0;
+            {cells.map((d, ci) => {
               const k = ymd(d);
-              const list = byDay.get(k) ?? [];
+              const hidden = hiddenByDay.get(k) ?? 0;
               const out = d.getMonth() !== month.getMonth();
               return (
                 <button
                   key={k}
+                  style={{ gridRow: Math.floor(ci / 7) + 1, gridColumn: (ci % 7) + 1 }}
                   className={`cell ${out ? "out" : ""} ${k === selected ? "sel" : ""} ${k === today ? "today" : ""} ${d.getDay() === 0 || holidayName(k) ? "sun" : d.getDay() === 6 ? "sat" : ""}`}
                   title={holidayName(k)}
                   onClick={() => {
@@ -3519,16 +3575,25 @@ function CalendarView(props: {
                   }}
                 >
                   <span className="num">{d.getDate()}</span>
-                  {list.slice(0, chipCount).map((e) => (
-                    <span key={e.key} className={`chip-ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)}>
-                      {e.kind === "todo" && <span className="todo-dot" />}
-                      {e.title}
-                    </span>
-                  ))}
-                  {list.length > chipCount && (chipCount === 2 ? <span className="more">+{list.length - 2}</span> : <span className="more-dot" aria-label={`일정 ${list.length - chipCount}개 더`} />)}
+                  {hidden > 0 && (chipCount === 2 ? <span className="more">+{hidden}</span> : <span className="more-dot" aria-label={`일정 ${hidden}개 더`} />)}
                 </button>
               );
             })}
+            {/* 일정 칩: 주마다 한 줄씩 덮어 그리고, 여러 날 일정은 그 날짜들만큼 길게 잇는다 */}
+            {weekBars.map((bars, w) => (
+              <div key={"w" + w} className="week-bars" style={{ gridRow: w + 1, gridColumn: "1 / -1" }}>
+                {bars.map((b) => (
+                  <span
+                    key={b.e.key}
+                    className={`chip-ev ${b.e.kind}${b.e.color ? " colored" : ""}${b.contL ? " cont-l" : ""}${b.contR ? " cont-r" : ""}`}
+                    style={{ ...evColor(b.e), gridColumn: `${b.from + 1} / ${b.to + 2}`, gridRow: b.lane + 1 }}
+                  >
+                    {b.e.kind === "todo" && !b.contL && <span className="todo-dot" />}
+                    {b.e.title}
+                  </span>
+                ))}
+              </div>
+            ))}
           </div>
           <div className="day-panel">
             <div className="day-head">
@@ -3542,7 +3607,7 @@ function CalendarView(props: {
             {(byDay.get(selected) ?? []).length ? (
               <ul className="evlist">
                 {byDay.get(selected)!.map((e) => (
-                  <Entry key={e.key} e={e} />
+                  <Entry key={e.key} e={e} day={selected} />
                 ))}
               </ul>
             ) : (
@@ -3571,7 +3636,7 @@ function CalendarView(props: {
                 <h3 className={d === today ? "is-today" : ""}>{dayLabel(d)}</h3>
                 <ul className="evlist">
                   {list.map((e) => (
-                    <Entry key={e.key} e={e} />
+                    <Entry key={e.key} e={e} day={d} />
                   ))}
                 </ul>
               </div>

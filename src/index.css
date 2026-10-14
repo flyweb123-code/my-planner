@@ -224,7 +224,7 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .ev:first-child { border-top: 0; }
 .ev.todo { cursor: pointer; }
 .ev-bar { width: 4px; align-self: stretch; border-radius: 2px; background: var(--accent); flex: 0 0 4px; }
-.ev-time { flex: 0 0 40px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ev-time { flex: 0 0 52px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ev-title { flex: 1; min-width: 0; font-weight: 500; }
 .ev .tag { background: var(--todo-soft); color: var(--todo); }
 
@@ -571,3 +571,13 @@ html { touch-action: pan-x pan-y; }
 .swipe-under { position: fixed; inset: 0; z-index: 0; background: var(--bg); pointer-events: none; overflow: hidden; }
 .swipe-under > .app { margin-left: auto; margin-right: auto; }
 main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 -20px; padding-left: 20px; padding-right: 20px; min-height: 100dvh; box-shadow: -10px 0 24px rgb(0 0 0 / 12%); }
+/* 달력 일정 칩: 주마다 겹쳐 그리는 층. 여러 날 일정은 날짜 칸을 가로질러 이어진다 */
+.week-bars { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-auto-rows: 17px; row-gap: 2px; align-content: start; padding-top: 31px; pointer-events: none; min-width: 0; overflow: hidden; }
+.week-bars .chip-ev { margin: 0 3px; min-width: 0; }
+.week-bars .chip-ev.cont-l { margin-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.week-bars .chip-ev.cont-r { margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.cell { position: relative; }
+.cell .more { position: absolute; top: 9px; right: 3px; padding: 0; }
+.cell .more-dot { position: absolute; top: 13px; right: 6px; margin: 0; }
+/* 시작·끝나는 날이 다른 일정은 날짜를 두 줄로: 칸 밖으로 넘치지 않게 */
+.event-info .tap-field .grow, .preview { white-space: pre-line; text-align: left; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
