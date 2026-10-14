@@ -549,29 +549,70 @@ export default function App() {
     const it = m.item_id ? items.find((i) => i.id === m.item_id) : undefined;
     const ev = !it && m.event_id ? events.find((e) => e.id === m.event_id) : undefined;
     if (!it && !ev) return false;
+    // 밀어서 돌아갈 때 뒤에 보여 줄 홈 화면을 지금 모습 그대로 복사해 둔다
+    homeSnap = snapScreen(mainRef.current);
     const linked = it ?? (ev!.itemId ? items.find((i) => i.id === ev!.itemId) : items.find((i) => i.calendarEventId === ev!.id));
     if (linked) open(linked.id);
     else backToEvent(ev!);
     setFromHome(linked ? "item" : "calendar");
     return true;
   };
-  // 홈 브리핑에서 연 화면이면 왼쪽 가장자리에서 오른쪽으로 밀어 홈으로 돌아간다 (다른 화면으로 옮기면 풀림)
+  // 홈 브리핑에서 연 화면이면 밀어서 돌아갈 곳이 '홈'이다 (그 화면에서 다른 곳으로 옮기면 풀림)
   const [fromHome, setFromHome] = useState<"item" | "calendar" | null>(null);
   useEffect(() => {
     if (fromHome && view.name !== fromHome) setFromHome(null);
   }, [view.name, fromHome]);
+  const fromHomeRef = useRef(fromHome);
+  fromHomeRef.current = fromHome;
+  const goHomeRef = useRef(() => setView({ name: "home" }));
   const mainRef = useRef<HTMLElement>(null);
+  // 뒤로 갈 수 있는 화면(왼쪽 위 뒤로 버튼이 있는 화면)은 왼쪽 가장자리에서 오른쪽으로 밀어 뒤로 간다.
+  // 지금 화면이 오른쪽으로 밀려나고, 이전 화면이 왼쪽에서 따라 들어온다.
   useEffect(() => {
-    const el = mainRef.current;
-    if (!fromHome || !el) return;
+    const main = mainRef.current;
+    if (!main) return;
+    const W = () => window.innerWidth;
     let sx = 0, sy = 0, dx = 0, on = false, decided = false;
-    const move = (x: number, anim: boolean) => {
-      el.style.transition = anim ? "transform .2s ease-out" : "";
-      el.style.transform = x ? `translateX(${x}px)` : "";
+    let go: (() => void) | null = null;
+    let under: HTMLDivElement | null = null;
+    const showUnder = (snap: ScreenSnap | null | undefined) => {
+      main.classList.add("swiping");
+      if (!snap) return;
+      under = document.createElement("div");
+      under.className = "swipe-under";
+      const copy = snap.node.cloneNode(true) as HTMLElement;
+      copy.inert = true;
+      copy.style.marginTop = `${-snap.scrollY}px`;
+      under.appendChild(copy);
+      document.body.appendChild(under);
+      copy.querySelectorAll<HTMLElement>(SCROLLERS).forEach((el, i) => (el.scrollTop = snap.scrolls[i] ?? 0));
+    };
+    const hideUnder = () => {
+      under?.remove();
+      under = null;
+      main.classList.remove("swiping");
+      main.style.transition = "";
+      main.style.transform = "";
+    };
+    const paint = (x: number, anim: boolean) => {
+      const t = anim ? "transform .24s cubic-bezier(.2,.8,.2,1)" : "none";
+      main.style.transition = t;
+      main.style.transform = `translateX(${x}px)`;
+      if (under) {
+        under.style.transition = t;
+        under.style.transform = `translateX(${x - W()}px)`;
+      }
     };
     const start = (e: TouchEvent) => {
       const t = e.touches[0];
-      on = e.touches.length === 1 && t.clientX < 28;
+      on = false;
+      if (e.touches.length !== 1 || t.clientX > 28) return;
+      if (fromHomeRef.current) go = () => goHomeRef.current();
+      else {
+        const btn = visibleBack();
+        go = btn ? () => btn.click() : null;
+      }
+      on = !!go;
       decided = false;
       dx = 0;
       sx = t.clientX;
@@ -585,34 +626,42 @@ export default function App() {
         if (Math.abs(x) < 8 && Math.abs(y) < 8) return;
         decided = true;
         if (Math.abs(y) > Math.abs(x) || x < 0) return void (on = false);
+        showUnder(fromHomeRef.current ? homeSnap : snapFor(visibleBack()));
       }
       if (e.cancelable) e.preventDefault();
       dx = Math.max(0, x);
-      move(dx, false);
+      paint(dx, false);
     };
     const end = () => {
       if (!on) return;
       on = false;
-      if (dx > 90) {
-        move(window.innerWidth, true);
+      if (!decided) return;
+      if (dx > Math.min(110, W() * 0.3)) {
+        paint(W(), true);
+        const run = go;
         setTimeout(() => {
-          move(0, false);
-          setView({ name: "home" });
-        }, 180);
-      } else move(0, true);
+          run?.();
+          requestAnimationFrame(() => requestAnimationFrame(hideUnder));
+        }, 240);
+      } else {
+        paint(0, true);
+        setTimeout(hideUnder, 250);
+      }
     };
     document.addEventListener("touchstart", start, { passive: true });
     document.addEventListener("touchmove", touchMove, { passive: false });
     document.addEventListener("touchend", end);
     document.addEventListener("touchcancel", end);
+    const stopTracking = trackScreens(main);
     return () => {
       document.removeEventListener("touchstart", start);
       document.removeEventListener("touchmove", touchMove);
       document.removeEventListener("touchend", end);
       document.removeEventListener("touchcancel", end);
-      move(0, false);
+      stopTracking();
+      hideUnder();
     };
-  }, [fromHome]);
+  }, []);
   const backToEvent = (ev: CalEvent) => {
     setReopenEvent(ev);
     setView({ name: "calendar" });
@@ -799,6 +848,51 @@ export default function App() {
     </div>
   );
 }
+
+/* ---------------- 밀어서 뒤로 가기: 이전 화면 복사본 ---------------- */
+// 화면을 옮기기 직전 모습을 복사해 두었다가, 밀어서 돌아갈 때 뒤에 깔아 보여 준다.
+type ScreenSnap = { node: HTMLElement; scrollY: number; scrolls: number[] };
+const SCROLLERS = ".thread, .drawer-list";
+const BACK_SEL = ".back, [aria-label='뒤로']";
+function snapScreen(main: HTMLElement | null): ScreenSnap | null {
+  if (!main) return null;
+  const app = main.closest(".app");
+  const wrap = document.createElement("div");
+  wrap.className = (app?.className ?? "app").replace(/\bswiping\b/, "");
+  const copy = main.cloneNode(true) as HTMLElement;
+  copy.classList.remove("swiping");
+  copy.removeAttribute("style");
+  wrap.appendChild(copy);
+  return { node: wrap, scrollY: window.scrollY, scrolls: [...main.querySelectorAll<HTMLElement>(SCROLLERS)].map((el) => el.scrollTop) };
+}
+// 지금 화면에서 보이는 뒤로 버튼
+function visibleBack(): HTMLElement | null {
+  const all = [...document.querySelectorAll<HTMLElement>(BACK_SEL)].filter((b) => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.top < 140 && !b.closest(".swipe-under");
+  });
+  return all[all.length - 1] ?? null;
+}
+// 뒤로 버튼마다 '그 화면으로 오기 직전 화면'을 기억한다
+const snaps = new WeakMap<HTMLElement, ScreenSnap>();
+const snapFor = (btn: HTMLElement | null) => (btn ? snaps.get(btn) : undefined);
+let homeSnap: ScreenSnap | null = null;
+function trackScreens(main: HTMLElement) {
+  const onTap = (e: Event) => {
+    const t = e.target as HTMLElement | null;
+    if (!t || t.closest(".swipe-under")) return;
+    const before = visibleBack();
+    const snap = snapScreen(main);
+    // 화면이 바뀌어 새 뒤로 버튼이 생겼으면 그 버튼에 직전 화면을 붙여 둔다 (뒤로 가는 길이면 붙이지 않음)
+    setTimeout(() => {
+      const after = visibleBack();
+      if (snap && after && after !== before && !snaps.has(after) && !(before && t.closest(BACK_SEL) === before)) snaps.set(after, snap);
+    }, 80);
+  };
+  document.addEventListener("click", onTap, true);
+  return () => document.removeEventListener("click", onTap, true);
+}
+
 
 /* ---------------- 홈: 비서와 대화 ---------------- */
 
