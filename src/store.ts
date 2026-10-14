@@ -9,7 +9,8 @@ export type Msg = {
   ts: number;
   suggestions?: { title: string; why: string; added?: boolean }[];
   actions?: Action[];
-  images?: string[]; // 보낸 사진의 작은 미리보기 (data URL). 원본은 저장하지 않는다.
+  images?: string[]; // 보낸 사진의 작은 미리보기 (data URL)
+  imageKeys?: string[]; // 전체 화면용 큰 사진이 들어 있는 기기 저장소(files) 이름, images와 같은 순서
 };
 export type Item = {
   id: string;

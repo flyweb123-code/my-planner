@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, markSeen, seenCount, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
@@ -992,6 +993,8 @@ function HomeChat(props: {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [msg]);
 
+  // 보낸 사진을 누르면 전체 화면으로 본다
+  const [viewer, setViewer] = useState<{ thumb: string; key?: string } | null>(null);
   // 보낼 사진: 클론에게 보낼 원본(줄인 것)과 대화에 남길 작은 미리보기
   const [pics, setPics] = useState<{ full: string; thumb: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1015,7 +1018,15 @@ function HomeChat(props: {
     setBusy(true);
     setStreaming("");
     const past = chat;
-    setChat((c) => [...c, { role: "user", text, ts: Date.now(), images: sent.length ? sent.map((p) => p.thumb) : undefined }]);
+    // 전체 화면으로 다시 볼 수 있게 큰 사진은 이 기기 저장소에 따로 둔다 (대화 기록에는 작은 미리보기만)
+    const keys = sent.map(() => "chatpic_" + uid());
+    sent.forEach((p, i) =>
+      fetch(p.full)
+        .then((r) => r.blob())
+        .then((b) => files.add(keys[i], new File([b], "photo.jpg", { type: "image/jpeg" })))
+        .catch(() => {}),
+    );
+    setChat((c) => [...c, { role: "user", text, ts: Date.now(), images: sent.length ? sent.map((p) => p.thumb) : undefined, imageKeys: sent.length ? keys : undefined }]);
     try {
       const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats, sent.map((p) => p.full));
       if (r.actions.length && briefCache) briefCache = { ...briefCache, at: 0 };
@@ -1172,16 +1183,16 @@ function HomeChat(props: {
         {fresh && briefing}
         {chat.map((m, i) => [
           m.role === "user" ? (
-            <div key={i} className="msg user">
+            <Fragment key={i}>
               {m.images?.length ? (
                 <div className="msg-pics">
                   {m.images.map((src, j) => (
-                    <img key={j} src={src} alt="보낸 사진" />
+                    <img key={j} src={src} alt="보낸 사진" onClick={() => setViewer({ thumb: src, key: m.imageKeys?.[j] })} />
                   ))}
                 </div>
               ) : null}
-              {m.text}
-            </div>
+              {m.text && <div className="msg user">{m.text}</div>}
+            </Fragment>
           ) : (
             <div key={i} className="msg assistant">
               <Markdown text={m.text} />
@@ -1209,6 +1220,7 @@ function HomeChat(props: {
         <div ref={endRef} />
       </div>
 
+      {viewer && <PhotoViewer thumb={viewer.thumb} fileKey={viewer.key} onClose={() => setViewer(null)} />}
       {pics.length > 0 && (
         <div className="pic-tray">
           {pics.map((p, i) => (
@@ -1245,6 +1257,35 @@ function HomeChat(props: {
         </button>
       </div>
     </section>
+  );
+}
+
+// 보낸 사진 전체 화면 보기: 저장해 둔 큰 사진이 있으면 그것을, 없으면 미리보기를 보여 준다. 아무 곳이나 누르면 닫힌다.
+function PhotoViewer({ thumb, fileKey, onClose }: { thumb: string; fileKey?: string; onClose: () => void }) {
+  const [src, setSrc] = useState(thumb);
+  useEffect(() => {
+    if (!fileKey) return;
+    let url = "";
+    files
+      .list(fileKey)
+      .then((a) => {
+        if (!a[0]) return;
+        url = URL.createObjectURL(a[0].blob);
+        setSrc(url);
+      })
+      .catch(() => {});
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [fileKey]);
+  return createPortal(
+    <div className="photo-viewer" onClick={onClose}>
+      <img src={src} alt="보낸 사진" />
+      <button className="pv-close" aria-label="닫기">
+        <IconClose />
+      </button>
+    </div>,
+    document.body,
   );
 }
 
@@ -1490,10 +1531,20 @@ function useStickToBottom(endRef: React.RefObject<HTMLDivElement | null>, deps: 
     const ro = new ResizeObserver(() => atBottom.current && toEnd());
     ro.observe(box);
     box.addEventListener("scroll", onScroll, { passive: true });
+    // 입력칸을 누르면 맨 아래 대화로 한 번에 내려간다 (키보드가 올라오며 높이가 바뀌는 동안에도 맨 아래 유지)
+    const root = box.closest(".homechat, .chatview");
+    const onFocus = (e: Event) => {
+      if (!(e.target instanceof HTMLTextAreaElement)) return;
+      atBottom.current = true;
+      toEnd();
+      [60, 160, 320, 620].forEach((ms) => setTimeout(() => atBottom.current && toEnd(), ms));
+    };
+    root?.addEventListener("focusin", onFocus);
     toEnd();
     return () => {
       ro.disconnect();
       box.removeEventListener("scroll", onScroll);
+      root?.removeEventListener("focusin", onFocus);
     };
   }, [endRef]);
   useEffect(() => {

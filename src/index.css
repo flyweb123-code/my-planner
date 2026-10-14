@@ -548,9 +548,17 @@ html { touch-action: pan-x pan-y; }
 .pic-tray img { width: 64px; height: 64px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); display: block; }
 .pic-tray button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; background: var(--text); color: var(--bg); display: grid; place-items: center; }
 .pic-tray button svg { width: 12px; height: 12px; }
-.msg-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.msg-pics img { max-width: 160px; max-height: 200px; border-radius: 12px; display: block; }
-.msg-pics:last-child { margin-bottom: 0; }
+.msg-pics { align-self: flex-end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 82%; }
+.msg-pics img { max-width: 180px; max-height: 220px; border-radius: 16px; display: block; cursor: zoom-in; border: 1px solid var(--line); }
+.msg-pics + .msg.user { margin-top: -16px; }
+.photo-viewer { position: fixed; inset: 0; z-index: 100; background: rgb(0 0 0 / 96%); display: grid; place-items: center; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); animation: pv-in .18s ease-out; }
+.photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pv-close { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; width: 36px; height: 36px; padding: 0; border-radius: 50%; background: rgb(255 255 255 / 18%); color: #fff; display: grid; place-items: center; }
+.pv-close svg { width: 18px; height: 18px; }
+@keyframes pv-in { from { opacity: 0; } }
+/* 고른 사진 미리보기는 사진 아이콘이 있는 왼쪽 아래에서 커지며 나타난다 */
+.pic-tray .pic { transform-origin: left bottom; animation: pic-in .22s cubic-bezier(.2,.9,.3,1.2) both; }
+@keyframes pic-in { from { opacity: 0; transform: scale(.3); } }
 .version-bubble { position: absolute; top: calc(100% - 2px); left: 50%; transform: translateX(-50%); z-index: 10; background: var(--text); color: var(--bg); font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 12px; white-space: nowrap; display: flex; flex-direction: column; align-items: center; gap: 1px; box-shadow: var(--shadow); animation: vb-in .15s ease-out; }
 .version-bubble small { font-size: 11px; font-weight: 500; opacity: .7; }
 .version-bubble::before { content: ""; position: absolute; top: -5px; left: 50%; width: 10px; height: 10px; background: inherit; transform: translateX(-50%) rotate(45deg); border-radius: 2px; }
