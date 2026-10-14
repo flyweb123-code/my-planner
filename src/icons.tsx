@@ -109,3 +109,11 @@ export const IconLayers = () => (
     <path d="m3 16.5 9 4.5 9-4.5" />
   </svg>
 );
+// 사진 첨부
+export const IconImage = () => (
+  <svg {...base} aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <circle cx="8.5" cy="9.5" r="1.8" />
+    <path d="m21 16-5-5-9 9" />
+  </svg>
+);

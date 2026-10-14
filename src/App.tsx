@@ -10,7 +10,7 @@ import { holidayName } from "./holidays";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
 import { toast } from "./toast";
-import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose, IconLayers } from "./icons";
+import { IconBack, IconCalendar, IconChat, IconCheck, IconClock, IconCompose, IconLeft, IconList, IconMenu, IconMore, IconPin, IconPlus, IconRefresh, IconRight, IconSettings, IconUp, IconTrash, IconClip, IconClose, IconLayers, IconImage } from "./icons";
 import * as files from "./files";
 import { demoItems } from "./demo";
 
@@ -544,6 +544,20 @@ export default function App() {
       onChat: (initial) => setView({ name: "evchat", ev, initial }),
     };
   };
+  // 홈 브리핑 줄 → 할 일 화면 또는 캘린더 일정 화면
+  const openBrief = (m: { item_id?: string; event_id?: string }) => {
+    const it = m.item_id ? items.find((i) => i.id === m.item_id) : undefined;
+    if (it) {
+      open(it.id);
+      return true;
+    }
+    const ev = m.event_id ? events.find((e) => e.id === m.event_id) : undefined;
+    if (!ev) return false;
+    const linked = ev.itemId ? items.find((i) => i.id === ev.itemId) : items.find((i) => i.calendarEventId === ev.id);
+    if (linked) open(linked.id);
+    else backToEvent(ev);
+    return true;
+  };
   const backToEvent = (ev: CalEvent) => {
     setReopenEvent(ev);
     setView({ name: "calendar" });
@@ -585,6 +599,7 @@ export default function App() {
             runTool={runTool}
             onUndo={undo}
             onGoSettings={() => setView({ name: "settings" })}
+            onOpenBrief={openBrief}
           />
         )}
         {view.name === "list" && <List items={items} setItems={setItems} onOpen={open} onRemove={removeTodo} />}
@@ -812,6 +827,7 @@ function HomeChat(props: {
   runTool: ToolRunner;
   onUndo: (a: Action) => void;
   onGoSettings: () => void;
+  onOpenBrief: (m: { item_id?: string; event_id?: string }) => boolean;
 }) {
   const { items, events, settings, chat, setChat } = props;
   const [msg, setMsg] = useState("");
@@ -828,16 +844,32 @@ function HomeChat(props: {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [msg]);
 
+  // 보낼 사진: 클론에게 보낼 원본(줄인 것)과 대화에 남길 작은 미리보기
+  const [pics, setPics] = useState<{ full: string; thumb: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const addPics = async (files: FileList | null) => {
+    if (!files) return;
+    const list = [...files].filter((f) => f.type.startsWith("image/")).slice(0, 5 - pics.length);
+    try {
+      const done = await Promise.all(list.map(async (f) => ({ full: await shrinkImage(f, 1568, 0.85), thumb: await shrinkImage(f, 360, 0.7) })));
+      setPics((p) => [...p, ...done].slice(0, 5));
+    } catch {
+      toast("사진을 열지 못했어요");
+    }
+  };
+
   const send = async (text: string) => {
     text = text.trim();
-    if (!text || busy) return;
+    if ((!text && !pics.length) || busy) return;
+    const sent = pics;
+    setPics([]);
     setMsg("");
     setBusy(true);
     setStreaming("");
     const past = chat;
-    setChat((c) => [...c, { role: "user", text, ts: Date.now() }]);
+    setChat((c) => [...c, { role: "user", text, ts: Date.now(), images: sent.length ? sent.map((p) => p.thumb) : undefined }]);
     try {
-      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats);
+      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats, sent.map((p) => p.full));
       if (r.actions.length && briefCache) briefCache = { ...briefCache, at: 0 };
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
@@ -887,6 +919,11 @@ function HomeChat(props: {
   }, [settings.apiKey, evKey]);
 
   const ask = (text: string) => send(`${text} 이거 어떻게 하면 좋을까?`);
+  // 브리핑 줄을 누르면 그 할 일이나 일정 화면을 연다. 이어진 곳을 못 찾으면 클론에게 물어본다.
+  const tapBrief = (m: { text: string; item_id?: string; event_id?: string }) => {
+    if (props.onOpenBrief(m)) return;
+    if (settings.apiKey) ask(m.text);
+  };
 
   // '확인할 것'을 밀어서 숨기면 6시간 동안만 안 보인다. 영영 사라지지 않고 그 뒤 브리핑에 다시 나올 수 있다.
   const [snooze, setSnooze] = useState<Record<string, number>>(() => {
@@ -916,7 +953,7 @@ function HomeChat(props: {
       <h2>{greeting()}</h2>
       {(
         <>
-          <button className="now-line" onClick={() => settings.apiKey && ask(brief.now.text)}>
+          <button className="now-line" onClick={() => tapBrief(brief.now)}>
             <span className="label">지금</span>
             <span>{brief.now.text}</span>
           </button>
@@ -924,7 +961,7 @@ function HomeChat(props: {
             <div className="bgroup">
               <p className="label warn">놓친 것</p>
               {brief.missed.map((m, i) => (
-                <button key={i} className="bline" onClick={() => settings.apiKey && ask(m.text)}>
+                <button key={i} className="bline" onClick={() => tapBrief(m)}>
                   <BriefText m={m} />
                 </button>
               ))}
@@ -941,7 +978,7 @@ function HomeChat(props: {
                     key={`${i}-${m.text}`}
                     open={swipedBrief === `${i}-${m.text}`}
                     onOpenChange={(o) => setSwipedBrief(o ? `${i}-${m.text}` : null)}
-                    onTap={() => settings.apiKey && ask(m.text)}
+                    onTap={() => tapBrief(m)}
                     actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
                   >
                     <BriefText m={m} />
@@ -987,6 +1024,13 @@ function HomeChat(props: {
         {chat.map((m, i) => [
           m.role === "user" ? (
             <div key={i} className="msg user">
+              {m.images?.length ? (
+                <div className="msg-pics">
+                  {m.images.map((src, j) => (
+                    <img key={j} src={src} alt="보낸 사진" />
+                  ))}
+                </div>
+              ) : null}
               {m.text}
             </div>
           ) : (
@@ -1016,11 +1060,27 @@ function HomeChat(props: {
         <div ref={endRef} />
       </div>
 
+      {pics.length > 0 && (
+        <div className="pic-tray">
+          {pics.map((p, i) => (
+            <span key={i} className="pic">
+              <img src={p.thumb} alt="첨부할 사진" />
+              <button aria-label="사진 빼기" onClick={() => setPics((all) => all.filter((_, j) => j !== i))}>
+                <IconClose />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="composer">
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addPics(e.target.files); e.target.value = ""; }} />
+        <button className="attach" aria-label="사진 첨부" onClick={() => fileRef.current?.click()} disabled={!settings.apiKey || busy || pics.length >= 5}>
+          <IconImage />
+        </button>
         <textarea
           ref={boxRef}
           rows={1}
-          placeholder={settings.apiKey ? "일정이나 할 일을 말해 주세요" : "설정에서 API 키를 넣어 주세요"}
+          placeholder={settings.apiKey ? (pics.length ? "덧붙일 말 (안 써도 돼요)" : "일정이나 할 일을 말해 주세요") : "설정에서 API 키를 넣어 주세요"}
           value={msg}
           disabled={!settings.apiKey}
           onChange={(e) => setMsg(e.target.value)}
@@ -1031,12 +1091,37 @@ function HomeChat(props: {
             }
           }}
         />
-        <button className="send" aria-label="보내기" onClick={() => send(msg)} disabled={busy || !msg.trim()}>
+        <button className="send" aria-label="보내기" onClick={() => send(msg)} disabled={busy || (!msg.trim() && !pics.length)}>
           <IconUp />
         </button>
       </div>
     </section>
   );
+}
+
+// 사진을 긴 쪽 max 픽셀 이하 JPEG로 줄인다 (클론에게 보내는 크기와 저장 공간을 줄이기 위해)
+function shrinkImage(file: File, max: number, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * k);
+      c.height = Math.round(img.naturalHeight * k);
+      const g = c.getContext("2d")!;
+      g.fillStyle = "#fff";
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("이미지를 열지 못했어요"));
+    };
+    img.src = url;
+  });
 }
 
 /* ---------------- 왼쪽 채팅 목록 ---------------- */

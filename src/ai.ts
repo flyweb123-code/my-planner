@@ -332,7 +332,7 @@ function historyFor(msgs: Msg[]) {
     content:
       m.role === "assistant" && m.actions?.length
         ? `${m.text}\n\n[이때 한 일: ${m.actions.map((a) => a.text + (a.undone ? " (사용자가 되돌림)" : "")).join(" / ")}]`
-        : m.text || "(내용 없음)",
+        : (m.images?.length ? `[사진 ${m.images.length}장 첨부]\n` : "") + (m.text || "(내용 없음)"),
   }));
 }
 
@@ -346,6 +346,7 @@ export async function homeChat(
   onText: (textSoFar: string) => void,
   run: ToolRunner,
   otherChats: HomeThread[] = [],
+  images: string[] = [], // 이번 메시지에 붙인 사진 (data:image/jpeg;base64,...)
 ): Promise<{ text: string; actions: Action[] }> {
   const c = client(s);
   const memory = pastChatsText(otherChats);
@@ -362,6 +363,9 @@ export async function homeChat(
     "- 할 일 목록에 있는 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
     "- '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다. 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
     "- 할 일의 일정 변경, 완료 같은 말은 update_item을 쓴다.\n" +
+    "- 사용자가 사진(포스터, 초대장, 공지, 메신저 캡처, 가이드 문서, 예약 확인 화면 등)을 보내면 사진 속 글을 꼼꼼히 읽고 날짜가 있는 일정(마감, 약속, 행사, 제출일 등)을 모두 찾아 묻지 말고 바로 도구로 넣는다. 일정이 여러 개면 각각 넣는다. " +
+    "제목은 무엇에 관한 일정인지 알 수 있게 짓고(예: '[타이레놀 콜드] 기획안 전달 마감'), 시간·장소·준비물·주의사항 같은 정보는 설명/메모에 넣는다. 연도가 없으면 오늘 이후로 가장 가까운 날짜로 본다. " +
+    "이미 캘린더에 같은 일정이 있으면 다시 넣지 않는다. 날짜를 읽기 애매한 것은 넣지 말고 무엇이 애매한지 물어본다. 넣은 뒤에는 넣은 일정을 짧은 목록으로 알려 준다.\n" +
     "도구를 쓴 뒤에는 무엇을 어디에 넣었는지 한두 문장으로 알려 준다. 그냥 질문이나 잡담이면 도구 없이 답한다. " +
     "지금 무엇을 해야 할지 물으면 일정과 캘린더를 보고 하나를 골라 준다.\n\n" +
     `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}`;
@@ -380,7 +384,16 @@ export async function homeChat(
     { type: "text", text: system },
   ];
 
-  const messages: Anthropic.MessageParam[] = [...historyFor(past), { role: "user", content: userText }];
+  const content: Anthropic.MessageParam["content"] = images.length
+    ? [
+        ...images.map((url) => ({
+          type: "image" as const,
+          source: { type: "base64" as const, media_type: "image/jpeg" as const, data: url.slice(url.indexOf(",") + 1) },
+        })),
+        { type: "text" as const, text: userText || "이 사진 속 일정을 읽고 넣어 줘." },
+      ]
+    : userText;
+  const messages: Anthropic.MessageParam[] = [...historyFor(past), { role: "user", content }];
   const actions: Action[] = [];
   let shown = "";
   for (let turn = 0; turn < 6; turn++) {
@@ -436,9 +449,9 @@ export async function checkKey(s: Settings): Promise<string> {
 /* ---------------- 홈 첫 화면 제안: 지금 할 일, 놓친 것, 확인할 것 ---------------- */
 
 const Briefing = z.object({
-  now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 40자 안팎 한 줄 (예: '타이레놀 기획안: 심의 접수 서류 마무리하기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열") }),
-  missed: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
-  check: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string() })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
+  now: z.object({ text: z.string().describe("지금 바로 할 한 가지. 어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 40자 안팎 한 줄 (예: '타이레놀 기획안: 심의 접수 서류 마무리하기')"), item_id: z.string().describe("관련 할 일 id, 없으면 빈 문자열"), event_id: z.string().describe("관련 캘린더 일정의 event_id, 없으면 빈 문자열") }),
+  missed: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string(), event_id: z.string().describe("관련 캘린더 일정의 event_id, 없으면 빈 문자열") })).describe("놓친 것: 날짜가 지났거나 오늘인데 안 한 일. 정말 놓친 것만. 없으면 빈 배열. 최대 2개"),
+  check: z.array(z.object({ date: z.string().describe("관련 날짜 YYYY-MM-DD. 날짜가 없으면 빈 문자열. 날짜는 여기만 쓰고 text에는 넣지 않는다"), text: z.string().describe("어떤 일정·기획안·할 일인지 이름과 무엇을 할지가 보이게 35자 안팎 한 줄. 날짜는 쓰지 않는다 (예: '하트로드 기획안 컨펌 아직 안 받음')"), item_id: z.string(), event_id: z.string().describe("관련 캘린더 일정의 event_id, 없으면 빈 문자열") })).describe("확인할 것: 곧 다가오는 일정 준비, 꼭 정해야 할 일. 중요한 것만. 최대 2개"),
 });
 export type Briefing = z.infer<typeof Briefing>;
 
@@ -448,7 +461,7 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
   const open = items.filter((i) => !i.done);
   const itemsText =
     open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 6, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
-  const evText = eventsText(events, 40, false, true);
+  const evText = eventsText(events, 40, true, true);
   const res = await client(s).messages.parse({
     // 첫 화면 브리핑은 자주 만들어지고 짧은 정리라서 빠르고 저렴한 모델로 만든다
     model: BRIEF_MODEL,
@@ -462,7 +475,7 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
       "곧 다가오는 일정(마감, 약속, 제출일)은 미리 준비할 것을 '확인할 것'이나 '지금'에 넣는다. 오늘 있는 일정은 시간에 맞춰 알려 준다. " +
       "할 일과 일정 안의 세부 업무도 하나하나 본다: 끝낸 것([x])과 남은 것, 세부 업무 메모, 할 일·세부 업무·일정에서 나눈 대화 기록을 모두 읽고, " +
       "대화에서 정한 것이나 하기로 한 것을 반영해 '다음에 할 세부 업무'를 구체적으로 짚는다(예: '드레스 투어 전에 원하는 스타일 사진 정리하기'). 이미 끝낸 세부 업무는 다시 권하지 않는다. " +
-      "캘린더 일정에서 나온 제안은 item_id를 빈 문자열로 두되, '(할 일 목록에도 있음)' 표시가 있으면 할 일 쪽 항목으로 다룬다. " +
+      "각 줄이 어떤 할 일이나 일정에 관한 것인지 꼭 이어 준다: 할 일이면 item_id에 그 id를, 캘린더 일정이면 event_id에 그 일정의 event_id를 넣는다(둘 다 해당하면 둘 다). 사용자가 줄을 누르면 그 화면이 열린다. " +
       "할 일과 캘린더 일정이 모두 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
     messages: [{ role: "user", content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}` }],
   });
@@ -478,22 +491,22 @@ export function simpleBriefing(items: Item[], events: CalEvent[] = []): Briefing
   // 할 일과 이어지지 않은 캘린더 일정 중 오늘~일주일 안의 것
   const calSoon = events
     .filter((e) => !e.itemId && e.date >= today && e.date <= soon)
-    .map((e) => ({ date: e.date, text: `${e.time ? e.time + " " : ""}'${e.title}' 일정이 있어요.`, item_id: "" }));
+    .map((e) => ({ date: e.date, text: `${e.time ? e.time + " " : ""}'${e.title}' 일정이 있어요.`, item_id: "", event_id: e.id }));
   const byDue = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
   const first = byDue[0];
   const week = Date.now() - 7 * 86400000;
   return {
     now: first
-      ? { text: `${first.title}${first.due ? ` (${first.due})` : ""}부터 해 보세요.`, item_id: first.id }
-      : calSoon[0] ?? { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "" },
+      ? { text: `${first.title}${first.due ? ` (${first.due})` : ""}부터 해 보세요.`, item_id: first.id, event_id: first.calendarEventId ?? "" }
+      : calSoon[0] ?? { text: "아직 할 일이 없어요. 앞으로 할 일을 말해 주세요.", item_id: "", event_id: "" },
     missed: open
       .filter((i) => i.due && i.due < today)
       .slice(0, 3)
-      .map((i) => ({ date: i.due, text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id })),
+      .map((i) => ({ date: i.due, text: `'${i.title}' 날짜가 지났어요.`, item_id: i.id, event_id: "" })),
     check: [
       ...(first ? calSoon : calSoon.slice(1)),
-      ...open.filter((i) => i.updatedAt < week).map((i) => ({ date: i.due, text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id })),
-      ...open.filter((i) => !i.due).map((i) => ({ date: "", text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id })),
+      ...open.filter((i) => i.updatedAt < week).map((i) => ({ date: i.due, text: `'${i.title}' 진행 상황을 업데이트해 주세요.`, item_id: i.id, event_id: "" })),
+      ...open.filter((i) => !i.due).map((i) => ({ date: "", text: `'${i.title}' 언제 할지 정할까요?`, item_id: i.id, event_id: "" })),
     ].slice(0, 3),
   };
 }
