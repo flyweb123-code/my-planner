@@ -704,7 +704,6 @@ export default function App() {
         )}
       </main>
       <PullToRefresh />
-      <ViewportProbe />
       {drawer && (
         <ChatDrawer
           threads={threads}
@@ -1004,6 +1003,7 @@ function HomeChat(props: {
           <IconMenu />
         </button>
         <strong onClick={tapTitle}>클론</strong>
+        <VersionBubble />
         <span className="head-right">
           <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
             <IconCompose />
@@ -1358,45 +1358,41 @@ function useStickToBottom(endRef: React.RefObject<HTMLDivElement | null>, deps: 
 
 // 화면 맨 위에서 아래로 끌어내리면 숨어 있던 새로고침 버튼이 따라 내려오고,
 // 충분히 당긴 뒤 놓으면 앱을 새로 불러온다 (새 버전과 최신 일정을 받는다).
-// 화면 크기 점검용: 홈 제목 '클론'을 빠르게 세 번 누르면 숫자가 뜨고, 다시 세 번 누르면 사라진다.
+// 홈 제목 '클론'을 빠르게 세 번 누르면 지금 앱 버전이 작은 말풍선으로 잠깐 뜬다.
 let titleTaps: number[] = [];
 function tapTitle() {
   const now = Date.now();
   titleTaps = [...titleTaps.filter((t) => now - t < 800), now];
   if (titleTaps.length >= 3) {
     titleTaps = [];
-    window.dispatchEvent(new Event("toggle-probe"));
+    window.dispatchEvent(new Event("show-version"));
   }
 }
 
-function ViewportProbe() {
+const buildTime = new Date(__BUILD_TIME__).toLocaleString("ko-KR", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+
+function VersionBubble() {
   const [on, setOn] = useState(false);
-  const [text, setText] = useState("");
   useEffect(() => {
-    const t = () => setOn((v) => !v);
-    window.addEventListener("toggle-probe", t);
-    return () => window.removeEventListener("toggle-probe", t);
-  }, []);
-  useEffect(() => {
-    if (!on) return;
-    const read = () => {
-      const vv = window.visualViewport;
-      const c = document.querySelector(".composer")?.getBoundingClientRect();
-      const box = document.querySelector(".homechat, .chatview")?.getBoundingClientRect();
-      const r = (n?: number) => (n === undefined ? "-" : Math.round(n));
-      setText(
-        `vv ${r(vv?.height)} top ${r(vv?.offsetTop)} pt ${r(vv?.pageTop)}\n` +
-          `inner ${window.innerHeight} client ${document.documentElement.clientHeight} screen ${screen.height}\n` +
-          `scrollY ${r(window.scrollY)} box ${r(box?.top)}~${r(box?.bottom)}\n` +
-          `composer ${r(c?.top)}~${r(c?.bottom)} kb ${document.querySelector(".app")?.classList.contains("kb-open") ? "y" : "n"}`,
-      );
+    let timer = 0;
+    const show = () => {
+      setOn(true);
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setOn(false), 3000);
     };
-    read();
-    const id = setInterval(read, 250);
-    return () => clearInterval(id);
-  }, [on]);
+    window.addEventListener("show-version", show);
+    return () => {
+      window.removeEventListener("show-version", show);
+      clearTimeout(timer);
+    };
+  }, []);
   if (!on) return null;
-  return <pre className="probe">{text}</pre>;
+  return (
+    <div className="version-bubble" onClick={() => setOn(false)}>
+      v{__APP_VERSION__}
+      <small>{buildTime}</small>
+    </div>
+  );
 }
 
 function PullToRefresh() {

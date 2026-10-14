@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 버전 번호(커밋 수)를 세려면 전체 기록이 필요
       - uses: actions/setup-node@v4
         with:
           node-version: 22
