@@ -555,3 +555,7 @@ html { touch-action: pan-x pan-y; }
 .version-bubble small { font-size: 11px; font-weight: 500; opacity: .7; }
 .version-bubble::before { content: ""; position: absolute; top: -5px; left: 50%; width: 10px; height: 10px; background: inherit; transform: translateX(-50%) rotate(45deg); border-radius: 2px; }
 @keyframes vb-in { from { opacity: 0; transform: translate(-50%, -4px); } }
+/* 홈 브리핑 줄을 누를 때 눌리는 느낌 */
+.now-line, .bline, .blist .swipe { transition: transform .12s ease, filter .12s ease; }
+.now-line:active, .bline:active, .blist .swipe:active { transform: scale(.97); filter: brightness(.94); }
+.blist .swipe-body:active { background: var(--surface-2); }

@@ -547,17 +547,72 @@ export default function App() {
   // 홈 브리핑 줄 → 할 일 화면 또는 캘린더 일정 화면
   const openBrief = (m: { item_id?: string; event_id?: string }) => {
     const it = m.item_id ? items.find((i) => i.id === m.item_id) : undefined;
-    if (it) {
-      open(it.id);
-      return true;
-    }
-    const ev = m.event_id ? events.find((e) => e.id === m.event_id) : undefined;
-    if (!ev) return false;
-    const linked = ev.itemId ? items.find((i) => i.id === ev.itemId) : items.find((i) => i.calendarEventId === ev.id);
+    const ev = !it && m.event_id ? events.find((e) => e.id === m.event_id) : undefined;
+    if (!it && !ev) return false;
+    const linked = it ?? (ev!.itemId ? items.find((i) => i.id === ev!.itemId) : items.find((i) => i.calendarEventId === ev!.id));
     if (linked) open(linked.id);
-    else backToEvent(ev);
+    else backToEvent(ev!);
+    setFromHome(linked ? "item" : "calendar");
     return true;
   };
+  // 홈 브리핑에서 연 화면이면 왼쪽 가장자리에서 오른쪽으로 밀어 홈으로 돌아간다 (다른 화면으로 옮기면 풀림)
+  const [fromHome, setFromHome] = useState<"item" | "calendar" | null>(null);
+  useEffect(() => {
+    if (fromHome && view.name !== fromHome) setFromHome(null);
+  }, [view.name, fromHome]);
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!fromHome || !el) return;
+    let sx = 0, sy = 0, dx = 0, on = false, decided = false;
+    const move = (x: number, anim: boolean) => {
+      el.style.transition = anim ? "transform .2s ease-out" : "";
+      el.style.transform = x ? `translateX(${x}px)` : "";
+    };
+    const start = (e: TouchEvent) => {
+      const t = e.touches[0];
+      on = e.touches.length === 1 && t.clientX < 28;
+      decided = false;
+      dx = 0;
+      sx = t.clientX;
+      sy = t.clientY;
+    };
+    const touchMove = (e: TouchEvent) => {
+      if (!on) return;
+      const t = e.touches[0];
+      const x = t.clientX - sx, y = t.clientY - sy;
+      if (!decided) {
+        if (Math.abs(x) < 8 && Math.abs(y) < 8) return;
+        decided = true;
+        if (Math.abs(y) > Math.abs(x) || x < 0) return void (on = false);
+      }
+      if (e.cancelable) e.preventDefault();
+      dx = Math.max(0, x);
+      move(dx, false);
+    };
+    const end = () => {
+      if (!on) return;
+      on = false;
+      if (dx > 90) {
+        move(window.innerWidth, true);
+        setTimeout(() => {
+          move(0, false);
+          setView({ name: "home" });
+        }, 180);
+      } else move(0, true);
+    };
+    document.addEventListener("touchstart", start, { passive: true });
+    document.addEventListener("touchmove", touchMove, { passive: false });
+    document.addEventListener("touchend", end);
+    document.addEventListener("touchcancel", end);
+    return () => {
+      document.removeEventListener("touchstart", start);
+      document.removeEventListener("touchmove", touchMove);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("touchcancel", end);
+      move(0, false);
+    };
+  }, [fromHome]);
   const backToEvent = (ev: CalEvent) => {
     setReopenEvent(ev);
     setView({ name: "calendar" });
@@ -581,7 +636,7 @@ export default function App() {
 
   return (
     <div className={`app ${view.name === "chat" || view.name === "evchat" ? "in-chat" : ""} ${view.name === "home" ? "in-home" : ""} ${typing ? "kb-open" : ""}`}>
-      <main>
+      <main ref={mainRef}>
         {view.name === "home" && (
           <HomeChat
             key={activeId}
@@ -2735,7 +2790,7 @@ function EventEditor({
           </div>
         </>
       )}
-      {!editing && !isNew && host && <SubtaskSection item={host.item} update={host.update} onOpenSub={host.onOpenSub} />}
+      {!editing && !isNew && host && (host.linked || host.item.subtasks.length > 0) && <SubtaskSection item={host.item} update={host.update} onOpenSub={host.onOpenSub} />}
       {!editing && <EventFiles owner={filesOwner} />}
       {!isNew && !todoId && (
         <button className="wide add-todo" disabled={busy} onClick={onAddTodo}>
