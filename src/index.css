@@ -540,7 +540,7 @@ html.chat-lock .app { min-height: 0; }
 .home-head strong { position: absolute; left: 50%; transform: translateX(-50%); }
 /* 손가락으로 벌리거나 두 번 탭해서 화면이 커지지 않게 (스크롤은 그대로) */
 html { touch-action: pan-x pan-y; }
-.composer .attach { flex: 0 0 auto; background: none; color: var(--faint); padding: 6px; border-radius: 50%; display: grid; place-items: center; align-self: flex-end; }
+.composer .attach { flex: 0 0 40px; width: 40px; height: 40px; margin: 2px -6px 2px 2px; background: none; color: var(--faint); padding: 0; border-radius: 50%; display: grid; place-items: center; }
 .composer .attach svg { width: 24px; height: 24px; }
 .composer .attach:disabled { opacity: .4; }
 .pic-tray { display: flex; gap: 8px; padding: 0 4px 8px; overflow-x: auto; flex: 0 0 auto; }
