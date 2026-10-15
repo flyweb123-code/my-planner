@@ -1042,7 +1042,34 @@ function HomeChat(props: {
     );
     setChat((c) => [...c, { role: "user", text, ts: Date.now(), images: sent.length ? sent.map((p) => p.thumb) : undefined, imageKeys: sent.length ? keys : undefined }]);
     try {
-      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, props.runTool, props.otherChats, sent.map((p) => p.full));
+      // 사진을 보내 클론이 일정이나 할 일을 만들면, 그 사진을 새 일정(할 일) 카드의 첨부 파일로 남긴다
+      const photoOwners = new Set<string>();
+      const attachPhotos = async (owner: string) => {
+        if (!sent.length || photoOwners.has(owner)) return;
+        photoOwners.add(owner);
+        const blobs = await Promise.all(sent.map((p) => fetch(p.full).then((r) => r.blob())));
+        for (const [i, b] of blobs.entries()) await files.add(owner, new File([b], `사진${blobs.length > 1 ? ` ${i + 1}` : ""}.jpg`, { type: "image/jpeg" }));
+      };
+      const runTool: ToolRunner = async (name, input) => {
+        const r = await props.runTool(name, input);
+        const u = r.action?.undo;
+        if (sent.length && u)
+          try {
+            if (name === "add_event" && u.eventId) await attachPhotos(u.eventId);
+            if (name === "add_item" && u.itemId) {
+              // 방금 사진을 붙인 일정을 할 일로 이은 것이면 사진을 할 일 쪽으로 옮긴다 (이어진 일정은 할 일의 첨부를 보여 준다)
+              const evId = (input as { event_id?: string }).event_id;
+              if (evId && photoOwners.has(evId)) {
+                await files.moveOwner(evId, u.itemId);
+                photoOwners.add(u.itemId);
+              } else await attachPhotos(u.itemId);
+            }
+          } catch {
+            toast("사진을 일정에 첨부하지 못했어요");
+          }
+        return r;
+      };
+      const r = await homeChat(settings, items, events, props.calOn, past, text, setStreaming, runTool, props.otherChats, sent.map((p) => p.full));
       if (r.actions.length && briefCache) briefCache = { ...briefCache, at: 0 };
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
