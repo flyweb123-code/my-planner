@@ -622,3 +622,9 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 .tap-field:not(:disabled):active, button.field:not(:disabled):active, .swipe-body:active, .resume:active, .drawer-foot:active, .bline:active, .now-line:active { scale: none; }
 .tap-field:not(:disabled):active, button.field:not(:disabled):active, .swipe-body:active, .resume:active, .drawer-foot:active { filter: none; background: var(--surface-2); }
 .tabs button:active { scale: .9; }
+
+/* 할 일 목록 맨 아래 가운데 + (세부 업무 ⊕와 같은 모양). 펼치면 45도 돌아 X */
+.list-add { margin: 14px auto 18px; }
+.list-add svg { transition: transform .2s; }
+.list-add.on svg { transform: rotate(45deg); }
+.list-add.on { color: var(--muted); }

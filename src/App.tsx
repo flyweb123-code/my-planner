@@ -1615,10 +1615,9 @@ function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: 
     <section onClick={() => setSwiped(null)}>
       <header className="page-head">
         <h1>할 일</h1>
-        <button className={`icon-btn add-btn ${adding ? "on" : ""}`} aria-label={adding ? "닫기" : "할 일 추가"} onClick={() => setAdding(!adding)}>
-          <IconPlus />
-        </button>
       </header>
+      {open.length === 0 && !adding && <p className="muted">아직 할 일이 없어요. 아래 + 를 눌러 추가해 보세요.</p>}
+      <ul className="items">{open.map(row)}</ul>
       {adding && (
       <div className="add add-card">
         <input autoFocus placeholder="앞으로 할 일을 적어 보세요" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
@@ -1626,8 +1625,9 @@ function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: 
         <button onClick={add} disabled={!title.trim()}>추가</button>
       </div>
       )}
-      {open.length === 0 && !adding && <p className="muted">아직 할 일이 없어요. 오른쪽 위 + 를 눌러 추가해 보세요.</p>}
-      <ul className="items">{open.map(row)}</ul>
+      <button className={`sub-add list-add ${adding ? "on" : ""}`} aria-label={adding ? "닫기" : "할 일 추가"} onClick={(e) => (e.stopPropagation(), setAdding(!adding))}>
+        <IconPlus />
+      </button>
       {done.length > 0 && (
         <>
           <button className="link" onClick={() => setShowDone(!showDone)}>
