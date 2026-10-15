@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { toast } from "./toast";
 
 export type Subtask = { id: string; title: string; done: boolean; byClaude: boolean; createdAt: number; chat?: Msg[]; note?: string; due?: string; time?: string; endDate?: string; endTime?: string };
-export type Action = { kind: "item" | "subtasks" | "update" | "event"; text: string; undo?: { itemId: string; eventId?: string; calendarId?: string; subtaskIds?: string[]; prev?: Partial<Item> } ; undone?: boolean };
+// prevEvent: 클론이 고치거나 지운 캘린더 일정의 원래 모습 (되돌리기용, gcal.EventEdit 모양)
+export type PrevEvent = { title: string; due: string; time?: string; endDate?: string; endTime?: string; location: string; description: string; colorId?: string; calendarId?: string };
+export type Action = { kind: "item" | "subtasks" | "update" | "event" | "event_update" | "event_delete"; text: string; undo?: { itemId: string; eventId?: string; calendarId?: string; subtaskIds?: string[]; prev?: Partial<Item>; prevEvent?: PrevEvent } ; undone?: boolean };
 export type Msg = {
   role: "user" | "assistant";
   text: string;

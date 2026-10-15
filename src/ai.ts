@@ -214,6 +214,18 @@ export const ToolInputs = {
     time: z.string().optional(),
     done: z.boolean().optional(),
   }),
+  update_event: z.object({
+    event_id: z.string(),
+    title: z.string().optional(),
+    date: z.string().optional(),
+    time: z.string().optional(),
+    end_time: z.string().optional(),
+    end_date: z.string().optional(),
+    location: z.string().optional(),
+    description: z.string().optional(),
+    add_note: z.string().optional(),
+  }),
+  delete_event: z.object({ event_id: z.string() }),
 };
 export type ToolName = keyof typeof ToolInputs;
 export type ToolRunner = (name: ToolName, input: unknown) => Promise<{ result: string; action?: Action }>;
@@ -261,6 +273,40 @@ const homeTools = (calendar: boolean): Anthropic.Tool[] => {
                   : {}),
               },
               required: ["title", "date"],
+              additionalProperties: false,
+            },
+            eager_input_streaming: true,
+          } as Anthropic.Tool,
+          {
+            name: "update_event",
+            description:
+              "구글 캘린더에 이미 있는 일정을 고친다(제목, 날짜, 시간, 장소, 설명/메모). 할 일 목록과 이어진 일정이면 할 일도 같이 맞춰진다. " +
+              "일정에 메모를 덧붙이라고 하면 add_note를 쓴다(원래 설명은 그대로 두고 끝에 붙인다). 설명을 통째로 바꾸라고 할 때만 description을 쓴다. 바꿀 항목만 넣는다.",
+            input_schema: {
+              type: "object" as const,
+              properties: {
+                event_id: { type: "string", description: "고칠 일정의 event_id (캘린더 일정 목록의 [event_id=...])" },
+                title: { type: "string", description: "새 제목" },
+                date: { type: "string", description: "새 시작 날짜 YYYY-MM-DD" },
+                time: { type: "string", description: "새 시작 시각 HH:MM. 종일 일정으로 바꾸려면 빈 문자열" },
+                end_time: { type: "string", description: "새 끝나는 시각 HH:MM" },
+                end_date: { type: "string", description: "새 끝나는 날 YYYY-MM-DD" },
+                location: { type: "string", description: "새 장소. 지우려면 빈 문자열" },
+                description: { type: "string", description: "설명(메모)을 통째로 이 내용으로 바꾼다" },
+                add_note: { type: "string", description: "설명(메모) 끝에 덧붙일 내용" },
+              },
+              required: ["event_id"],
+              additionalProperties: false,
+            },
+            eager_input_streaming: true,
+          } as Anthropic.Tool,
+          {
+            name: "delete_event",
+            description: "구글 캘린더 일정을 지운다. 사용자가 지워 달라고 했거나, 방금 같은 일정을 실수로 한 번 더 넣었을 때만 쓴다.",
+            input_schema: {
+              type: "object" as const,
+              properties: { event_id: { type: "string", description: "지울 일정의 event_id" } },
+              required: ["event_id"],
               additionalProperties: false,
             },
             eager_input_streaming: true,
@@ -363,6 +409,10 @@ export async function homeChat(
     "- 할 일 목록에 있는 할 일의 일부나 준비 작업이면 add_subtasks로 그 할 일 아래에 넣는다.\n" +
     "- '내일', '다음 주 금요일' 같은 말은 오늘 날짜 기준으로 YYYY-MM-DD로 바꾼다. 약속처럼 정해진 시각이 있으면 time도 넣는다.\n" +
     "- 할 일의 일정 변경, 완료 같은 말은 update_item을 쓴다.\n" +
+    (calendar
+      ? "- 캘린더에 이미 있는 일정을 고치거나(제목, 날짜, 시간, 장소) 메모를 넣으라고 하면 새 일정을 만들지 말고 update_event로 그 일정을 고친다. '그 일정에 메모로 넣어 줘'는 add_note로 덧붙인다.\n" +
+        "- 일정을 지우라고 하면 delete_event를 쓴다. 실수로 같은 일정을 두 번 넣었으면 방금 넣은 쪽을 지운다. 지운 뒤에는 무엇을 지웠는지 알려 준다.\n"
+      : "") +
     "- 사용자가 사진(포스터, 초대장, 공지, 메신저 캡처, 가이드 문서, 예약 확인 화면 등)을 보내면 사진 속 글을 꼼꼼히 읽고 날짜가 있는 일정(마감, 약속, 행사, 제출일 등)을 모두 찾아 묻지 말고 바로 도구로 넣는다. 일정이 여러 개면 각각 넣는다. " +
     "제목은 무엇에 관한 일정인지 알 수 있게 짓고(예: '[타이레놀 콜드] 기획안 전달 마감'), 시간·장소·준비물·주의사항 같은 정보는 설명/메모에 넣는다. 연도가 없으면 오늘 이후로 가장 가까운 날짜로 본다. " +
     "이미 캘린더에 같은 일정이 있으면 다시 넣지 않는다. 날짜를 읽기 애매한 것은 넣지 말고 무엇이 애매한지 물어본다. 넣은 뒤에는 넣은 일정을 짧은 목록으로 알려 준다.\n" +

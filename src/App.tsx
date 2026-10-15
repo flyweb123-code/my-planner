@@ -487,6 +487,77 @@ export default function App() {
         action: { kind: "update", text: `'${target.title}' ${words.join(", ")}`, undo: { itemId: target.id, prev } },
       };
     }
+    if (name === "update_event" || name === "delete_event") {
+      const x = input as { event_id: string; title?: string; date?: string; time?: string; end_time?: string; end_date?: string; location?: string; description?: string; add_note?: string };
+      const ev = events.find((e) => e.id === x.event_id) ?? createdEvents.current.get(x.event_id);
+      if (!ev) throw new Error("그 event_id의 캘린더 일정을 찾지 못했어요.");
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 설정에서 다시 연결해 주세요.");
+      const prev: gcal.EventEdit = { title: ev.title, due: ev.date, time: ev.time || undefined, endDate: ev.endDate || ev.date, endTime: ev.endTime || undefined, location: ev.location, description: ev.description, colorId: ev.colorId, calendarId: ev.calendarId };
+      const when = `${ev.date}${ev.time ? " " + ev.time : ""}`;
+      if (name === "delete_event") {
+        if (itemsRef.current.some((i) => i.calendarEventId === ev.id)) throw new Error("할 일 목록과 이어진 일정이라 여기서 지우지 않았어요. 할 일 화면에서 지우도록 안내해 주세요.");
+        await gcal.deleteEvent(token, ev.id, ev.calendarId);
+        createdEvents.current.delete(ev.id);
+        loadEvents();
+        return { result: "지움.", action: { kind: "event_delete", text: `캘린더 일정 삭제: ${ev.title} (${when})`, undo: { itemId: "", prevEvent: prev } } };
+      }
+      const d: gcal.EventEdit = { ...prev };
+      const words: string[] = [];
+      if (x.title !== undefined) {
+        d.title = x.title;
+        words.push(`제목 → ${x.title}`);
+      }
+      if (x.date !== undefined || x.time !== undefined) {
+        d.due = x.date ?? prev.due;
+        d.time = x.time === undefined ? prev.time : x.time || undefined;
+        // 끝을 말하지 않았으면 원래 길이를 그대로 옮긴다
+        const days = Math.round((new Date(prev.endDate + "T00:00:00").getTime() - new Date(prev.due + "T00:00:00").getTime()) / 86400000);
+        if (d.time) {
+          const mins = prev.time && prev.endTime ? Math.max(15, (new Date(`${prev.endDate}T${prev.endTime}:00`).getTime() - new Date(`${prev.due}T${prev.time}:00`).getTime()) / 60000) : 60;
+          const e = addMinutes(d.due, d.time, mins);
+          d.endDate = e.date;
+          d.endTime = e.time;
+        } else {
+          const e = new Date(d.due + "T00:00:00");
+          e.setDate(e.getDate() + Math.max(0, days));
+          d.endDate = e.toLocaleDateString("sv-SE");
+          d.endTime = undefined;
+        }
+        words.push(`일정 → ${d.due}${d.time ? " " + d.time : " 종일"}`);
+      }
+      if (x.end_date !== undefined) {
+        d.endDate = x.end_date || d.due;
+        words.push(`끝나는 날 → ${d.endDate}`);
+      }
+      if (x.end_time !== undefined) {
+        d.endTime = x.end_time || undefined;
+        words.push(`끝 → ${x.end_time}`);
+      }
+      if (x.location !== undefined) {
+        d.location = x.location;
+        words.push(x.location ? `장소 → ${x.location}` : "장소 지움");
+      }
+      if (x.description !== undefined) {
+        d.description = x.description;
+        words.push("메모 바꿈");
+      }
+      const fieldsChanged = words.length > 0;
+      if (x.add_note) {
+        // 다른 기기에서 고친 설명을 지우지 않도록 최신 설명 끝에 붙인다
+        d.description = await gcal.appendDescription(token, ev.id, x.add_note, ev.calendarId);
+        prev.description = d.description.slice(0, Math.max(0, d.description.length - x.add_note.length)).trimEnd();
+        words.push(`메모 추가: ${x.add_note.length > 40 ? x.add_note.slice(0, 40) + "…" : x.add_note}`);
+      }
+      if (!words.length) return { result: "바꿀 내용이 없어요." };
+      if (fieldsChanged) await gcal.updateEvent(token, ev.id, d, ev.calendarId);
+      syncTodoFromEvent(ev, d);
+      loadEvents();
+      return {
+        result: "고침.",
+        action: { kind: "event_update", text: `'${ev.title}' 일정 ${words.join(", ")}`, undo: { itemId: "", eventId: ev.id, calendarId: ev.calendarId, prevEvent: prev } },
+      };
+    }
     throw new Error(`모르는 도구: ${name}`);
   };
 
@@ -503,6 +574,24 @@ export default function App() {
         const token = gcal.savedToken() ?? (await gcal.renew());
         if (!token) return toast("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
         await gcal.deleteEvent(token, eid, u.calendarId).then(loadEvents, (e) => toast((e as Error).message));
+      })();
+    }
+    if ((a.kind === "event_update" || a.kind === "event_delete") && u.prevEvent) {
+      const p = u.prevEvent;
+      const eid = u.eventId;
+      (async () => {
+        const token = gcal.savedToken() ?? (await gcal.renew());
+        if (!token) return toast("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+        try {
+          if (eid) {
+            await gcal.updateEvent(token, eid, p, p.calendarId);
+            const ev = events.find((e) => e.id === eid);
+            if (ev) syncTodoFromEvent(ev, p);
+          } else await gcal.createEvent(token, p);
+          loadEvents();
+        } catch (e) {
+          toast((e as Error).message);
+        }
       })();
     }
     if (a.kind === "subtasks") updateItem(u.itemId, (it) => ({ ...it, subtasks: it.subtasks.filter((s) => !u.subtaskIds?.includes(s.id)) }));
