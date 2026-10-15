@@ -2,6 +2,8 @@ import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, markSeen, seenCount, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
+import * as alerts from "./alerts";
+import type { Alert } from "./alerts";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
 import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
@@ -97,6 +99,36 @@ export default function App() {
   useEffect(() => {
     if (view.name === "calendar" && reopenEvent) setReopenEvent(null);
   }, [view.name, reopenEvent]);
+  // 일정 시작 3시간 전 알림: 30초마다(그리고 앱으로 돌아올 때) 다시 본다
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => !document.hidden && setNow(Date.now());
+    const t = setInterval(tick, 30000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, []);
+  const [seenAlerts, setSeenAlerts] = useState(alerts.seenKeys);
+  useEffect(() => {
+    const f = () => setSeenAlerts(alerts.seenKeys());
+    window.addEventListener("alerts-seen", f);
+    return () => window.removeEventListener("alerts-seen", f);
+  }, []);
+  const upcoming = alerts.activeAlerts(items, events, now);
+  const upKey = upcoming.map((a) => a.key).join(",");
+  const unseenCount = upcoming.filter((a) => !seenAlerts[a.key]).length;
+  useEffect(() => alerts.setBadge(unseenCount), [unseenCount]);
+  useEffect(() => void alerts.notifyLocal(upcoming), [upKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => alerts.sync(items, events), [items, events]);
+  // 홈에서 다른 화면으로 넘어가면 지금 알림은 본 것으로 친다 (빨간 점이 사라짐)
+  const prevView = useRef(view.name);
+  useEffect(() => {
+    if (prevView.current === "home" && view.name !== "home") alerts.markSeen(upKey ? upKey.split(",") : []);
+    prevView.current = view.name;
+  }, [view.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const aiEvents = events.map((e) => {
     const c = eventChats[e.id];
     return c && (c.chat.length || c.subtasks.length) ? { ...e, chat: c.chat, subtasks: c.subtasks } : e;
@@ -832,6 +864,12 @@ export default function App() {
             onUndo={undo}
             onGoSettings={() => setView({ name: "settings" })}
             onOpenBrief={openBrief}
+            alerts={upcoming}
+            seenAlerts={seenAlerts}
+            onOpenAlert={(a) => {
+              alerts.markSeen([a.key]);
+              if (!openBrief(a)) setView({ name: "calendar" });
+            }}
           />
         )}
         {view.name === "list" && <List items={items} setItems={setItems} onOpen={open} onRemove={removeTodo} />}
@@ -933,7 +971,7 @@ export default function App() {
           />
         )}
         {view.name === "settings" && (
-          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} onCalendarsChanged={loadEvents} onBack={() => setView({ name: "home" })} />
+          <SettingsView settings={settings} setSettings={setSettings} calOn={calOn} linked={linked} eventsCount={events.length} events={events} pinnedCount={items.filter((i) => i.pinned && !i.done).length} items={items} setItems={setItems} onConnect={connectCalendar} onDisconnect={disconnectCalendar} onCalendarsChanged={loadEvents} onBack={() => setView({ name: "home" })} />
         )}
       </main>
       <PullToRefresh />
@@ -966,6 +1004,7 @@ export default function App() {
         <nav className="tabs">
           <button className={view.name === "home" || view.name === "settings" ? "on" : ""} onClick={() => setView({ name: "home" })}>
             <IconChat />
+            {unseenCount > 0 && view.name !== "home" && <span className="tab-dot" aria-label="새 알림" />}
             클론
           </button>
           <button className={view.name === "list" || view.name === "item" ? "on" : ""} onClick={() => setView({ name: "list" })}>
@@ -1119,6 +1158,9 @@ function HomeChat(props: {
   onUndo: (a: Action) => void;
   onGoSettings: () => void;
   onOpenBrief: (m: { item_id?: string; event_id?: string }) => boolean;
+  alerts: Alert[];
+  seenAlerts: Record<string, number>;
+  onOpenAlert: (a: Alert) => void;
 }) {
   const { items, events, settings, chat, setChat } = props;
   const [msg, setMsg] = useState("");
@@ -1289,6 +1331,21 @@ function HomeChat(props: {
       <h2>{greeting()}</h2>
       {(
         <>
+          {props.alerts.length > 0 && (
+            <div className="bgroup alerts">
+              <p className="label alert">곧 시작 <span className="label-hint">3시간 안</span></p>
+              {props.alerts.map((a) => (
+                <button key={a.key} className="bline" onClick={() => props.onOpenAlert(a)}>
+                  <span className="grow brief-row">
+                    <span className="date-chip due alert-chip">{alerts.whenLabel(a)}</span>
+                    <span>{a.title}</span>
+                  </span>
+                  {!props.seenAlerts[a.key] && <span className="new-dot" aria-label="새 알림" />}
+                  <span className="chev"><IconRight /></span>
+                </button>
+              ))}
+            </div>
+          )}
           <button className="now-line" onClick={() => tapBrief(brief.now)}>
             <span className="grow now-body">
               <span className="label">지금</span>
@@ -2678,7 +2735,7 @@ function ChatView(props: {
 
 /* ---------------- 설정 ---------------- */
 
-type SettingsPage = "main" | "claude" | "calendar" | "widget" | "data";
+type SettingsPage = "main" | "claude" | "calendar" | "alerts" | "widget" | "data";
 
 function SettingsView(props: {
   settings: Settings;
@@ -2686,6 +2743,7 @@ function SettingsView(props: {
   calOn: boolean;
   linked: boolean;
   eventsCount: number;
+  events: CalEvent[];
   pinnedCount: number;
   items: Item[];
   setItems: (fn: (a: Item[]) => Item[]) => void;
@@ -2723,6 +2781,13 @@ function SettingsView(props: {
             </span>
             <span className="chev"><IconRight /></span>
           </li>
+          <li onClick={() => setPage("alerts")}>
+            <span className="grow">
+              <strong>일정 알림</strong>
+              <span className={`status ${alerts.pushOn() && alerts.permission() === "granted" ? "on" : ""}`}>{alerts.pushOn() && alerts.permission() === "granted" ? "켜짐 · 시작 3시간 전" : "꺼짐"}</span>
+            </span>
+            <span className="chev"><IconRight /></span>
+          </li>
           <li onClick={() => setPage("widget")}>
             <span className="grow">
               <strong>잠금 화면 위젯</strong>
@@ -2741,7 +2806,7 @@ function SettingsView(props: {
       </section>
     );
 
-  const titles = { claude: "클론 연결", calendar: "구글 캘린더", widget: "잠금 화면 위젯", data: "데이터 백업" };
+  const titles = { claude: "클론 연결", calendar: "구글 캘린더", alerts: "일정 알림", widget: "잠금 화면 위젯", data: "데이터 백업" };
   return (
     <section className="settings">
       <header className="sub-head">
@@ -2753,6 +2818,7 @@ function SettingsView(props: {
       </header>
       {page === "claude" && <ClaudeSettings settings={settings} setSettings={props.setSettings} />}
       {page === "calendar" && <CalendarSettings {...props} />}
+      {page === "alerts" && <AlertSettings items={props.items} events={props.events} onGoCalendar={() => setPage("calendar")} />}
       {page === "widget" && <WidgetSettings items={props.items} onGoCalendar={() => setPage("calendar")} />}
       {page === "data" && <DataSettings items={props.items} setItems={props.setItems} />}
     </section>
@@ -2971,6 +3037,104 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
         {check === "ok" && <span className="check ok">서버 준비됐어요</span>}
         {check === "fail" && <span className="check fail">서버에 접속이 안 되거나 비밀 값이 빠졌어요</span>}
       </div>
+    </div>
+  );
+}
+
+// 일정 시작 3시간 전 휴대폰 알림 켜기/끄기
+function AlertSettings({ items, events, onGoCalendar }: { items: Item[]; events: CalEvent[]; onGoCalendar: () => void }) {
+  const server = gcal.serverUrl();
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const installed = matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const [on, setOn] = useState(() => alerts.pushOn() && alerts.permission() === "granted");
+  const [srv, setSrv] = useState<"" | "checking" | "ok" | "old" | "fail">("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => {
+    if (!server) return;
+    setSrv("checking");
+    fetch(server + "/")
+      .then((r) => r.json())
+      .then((r) => setSrv(r.push ? "ok" : "old"))
+      .catch(() => setSrv("fail"));
+  }, [server]);
+
+  const turnOn = async () => {
+    setBusy(true);
+    setMsg("");
+    const r = await alerts.enable(items, events);
+    setBusy(false);
+    setOn(r !== "denied");
+    setMsg(
+      r === "push"
+        ? "알림을 켰어요. 앱을 닫아 둬도 일정 3시간 전에 알려 드려요."
+        : r === "local"
+          ? "알림을 켰어요. 지금은 앱이 열려 있을 때만 알려 드려요. 앱이 닫혀 있을 때도 받으려면 아래 서버 설정을 해 주세요."
+          : alerts.notifySupported()
+            ? "알림이 허용되지 않았어요. 기기 설정에서 클론의 알림을 허용해 주세요."
+            : ios
+              ? "아이폰은 홈 화면에 추가한 클론 앱에서만 알림을 받을 수 있어요."
+              : "이 브라우저는 알림을 지원하지 않아요.",
+    );
+  };
+  const turnOff = async () => {
+    await alerts.disable();
+    setOn(false);
+    setMsg("알림을 껐어요. 브리핑의 '곧 시작'은 그대로 보여요.");
+  };
+  const test = async () => {
+    setMsg((await alerts.test()) ? "시험 알림을 보냈어요. 몇 초 안에 와요." : "시험 알림을 보내지 못했어요. 알림을 껐다가 다시 켜 보세요.");
+  };
+
+  return (
+    <div className="panel">
+      <p className="muted small">시간이 정해진 일정이 시작하기 3시간 전에 휴대폰에 알림이 오고, 앱 아이콘과 홈 브리핑에 빨간 점이 생겨요. 브리핑을 보고 다른 화면으로 넘어가면 빨간 점은 사라져요.</p>
+      {ios && !installed && (
+        <p className="check fail">아이폰은 사파리에서 <b>공유 버튼 → 홈 화면에 추가</b>로 클론을 설치한 뒤, 홈 화면의 클론 앱에서 알림을 켜야 해요.</p>
+      )}
+      <div className={`keybox ${on ? "on" : ""}`}>
+        <span className="dot-big" />
+        <div className="grow">
+          <strong>{on ? "알림 켜짐" : "알림 꺼짐"}</strong>
+          <span className="muted small">
+            {!server
+              ? "앱이 열려 있을 때만 알려요"
+              : srv === "ok"
+                ? "앱이 닫혀 있어도 서버가 알려 줘요"
+                : srv === "old"
+                  ? "서버 코드가 예전 버전이라 앱이 열려 있을 때만 알려요"
+                  : srv === "fail"
+                    ? "서버에 접속이 안 돼서 앱이 열려 있을 때만 알려요"
+                    : "서버 확인 중…"}
+          </span>
+        </div>
+      </div>
+      {on ? (
+        <>
+          {server && srv === "ok" && <button className="secondary" onClick={test}>시험 알림 보내기</button>}
+          <button className="secondary" onClick={turnOff}>알림 끄기</button>
+        </>
+      ) : (
+        <button onClick={turnOn} disabled={busy}>{busy ? "켜는 중…" : "알림 켜기"}</button>
+      )}
+      {msg && <p className="check ok">{msg}</p>}
+      {(!server || srv !== "ok") && (
+        <>
+          <h3>앱이 닫혀 있을 때도 받으려면</h3>
+          {!server ? (
+            <>
+              <p className="muted small">구글 캘린더의 연결 유지 서버가 있어야 해요.</p>
+              <button className="secondary" onClick={onGoCalendar}>구글 캘린더 설정으로</button>
+            </>
+          ) : (
+            <ol className="steps">
+              <li>Cloudflare에서 서버 코드를 새 버전으로 바꿔요. 저장소(KV) <b>PINS</b>가 연결돼 있어야 해요.</li>
+              <li>Worker의 <b>설정 → 트리거 → 크론 트리거 추가</b>에서 <b>5분마다</b>(*/5 * * * *)로 넣어요.</li>
+              <li>여기로 돌아와 알림을 껐다가 다시 켜요.</li>
+            </ol>
+          )}
+        </>
+      )}
     </div>
   );
 }
