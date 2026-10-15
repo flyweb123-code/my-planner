@@ -1287,6 +1287,7 @@ function HomeChat(props: {
               {brief.missed.map((m, i) => (
                 <button key={i} className="bline" onClick={() => tapBrief(m)}>
                   <BriefText m={m} />
+                  <span className="chev"><IconRight /></span>
                 </button>
               ))}
             </div>
@@ -1306,6 +1307,7 @@ function HomeChat(props: {
                     actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
                   >
                     <BriefText m={m} />
+                    <span className="chev"><IconRight /></span>
                   </SwipeRow>
                 ))}
               </ul>
