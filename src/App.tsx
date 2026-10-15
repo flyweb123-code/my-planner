@@ -2147,18 +2147,23 @@ function InlineText(props: {
   const { value, multiline } = props;
   const [edit, setEdit] = useState(false);
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
-  useEffect(() => {
-    const t = ref.current;
-    if (!edit || !t) return;
-    t.focus();
-    t.setSelectionRange(t.value.length, t.value.length);
-  }, [edit]);
-  useEffect(() => {
+  // 높이 맞추기를 그리기 전에 해서, 고치기 시작할 때 칸이 한 줄로 줄었다 늘어나며 화면이 들썩이지 않게 한다.
+  useLayoutEffect(() => {
     const t = ref.current;
     if (!t || !multiline) return;
+    // 높이를 잠깐 auto로 재는 동안 칸이 줄어 페이지가 짧아지면 스크롤이 위로 끌려갔다 돌아온다. 바깥 높이를 붙잡아 둔다.
+    const box = t.parentElement;
+    if (box) box.style.minHeight = `${box.offsetHeight}px`;
     t.style.height = "auto";
     t.style.height = `${t.scrollHeight}px`;
+    if (box) box.style.minHeight = "";
   }, [edit, value, multiline]);
+  useLayoutEffect(() => {
+    const t = ref.current;
+    if (!edit || !t) return;
+    t.focus({ preventScroll: true });
+    t.setSelectionRange(t.value.length, t.value.length);
+  }, [edit]);
   const finish = () => (setEdit(false), props.onDone?.());
   if (edit)
     return (
