@@ -1079,9 +1079,18 @@ function briefDate(m: { text: string; date?: string }): { date: string; text: st
   return { date, text };
 }
 
-function BriefText({ m }: { m: { text: string; date?: string } }) {
+function BriefText({ m, pad }: { m: { text: string; date?: string }; pad?: boolean }) {
   const { date, text } = briefDate(m);
-  if (!date) return <span className="grow">{m.text}</span>;
+  // pad: 같은 묶음에 날짜 칩이 있는 줄이 있으면, 날짜 없는 줄도 같은 자리에서 글자가 시작하게 빈 칸을 둔다.
+  if (!date)
+    return pad ? (
+      <span className="grow brief-row">
+        <span className="date-chip spacer" aria-hidden="true" />
+        <span>{m.text}</span>
+      </span>
+    ) : (
+      <span className="grow">{m.text}</span>
+    );
   const n = daysUntil(date) ?? 99;
   const label = n === 0 ? "오늘" : n === 1 ? "내일" : `${+date.slice(5, 7)}/${+date.slice(8, 10)}`;
   return (
@@ -1289,7 +1298,7 @@ function HomeChat(props: {
               <p className="label warn">놓친 것</p>
               {brief.missed.map((m, i) => (
                 <button key={i} className="bline" onClick={() => tapBrief(m)}>
-                  <BriefText m={m} />
+                  <BriefText m={m} pad={brief.missed.some((x) => briefDate(x).date)} />
                   <span className="chev"><IconRight /></span>
                 </button>
               ))}
@@ -1309,7 +1318,7 @@ function HomeChat(props: {
                     onTap={() => tapBrief(m)}
                     actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
                   >
-                    <BriefText m={m} />
+                    <BriefText m={m} pad={checks.some((x) => briefDate(x).date)} />
                     <span className="chev"><IconRight /></span>
                   </SwipeRow>
                 ))}

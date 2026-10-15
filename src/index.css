@@ -628,3 +628,7 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 .list-add svg { transition: transform .2s; }
 .list-add.on svg { transform: rotate(45deg); }
 .list-add.on { color: var(--muted); }
+
+/* 브리핑 날짜 칩 폭을 고정해서 '오늘'·'10/14' 어느 쪽이든 글자가 같은 자리에서 시작 */
+.date-chip { width: 52px; padding-left: 0; padding-right: 0; text-align: center; box-sizing: border-box; }
+.date-chip.spacer { visibility: hidden; }
