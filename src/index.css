@@ -613,3 +613,12 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 .now-line .chev svg { width: 18px; height: 18px; }
 .act .chev { display: inline-flex; }
 .act .chev svg { width: 16px; height: 16px; }
+
+/* 누를 수 있는 것은 모두 누르는 느낌: 버튼·칩은 살짝 작아지고 어두워지고, 카드 안의 줄은 바탕색이 바뀐다.
+   transform 대신 scale 속성을 써서 회전(＋ 버튼) 같은 기존 transform과 겹치지 않게 한다. */
+button, .filebtn, a, .act.tappable, .title-view, .swipe-body { transition: scale .12s ease, filter .12s ease, background-color .12s ease, opacity .15s; }
+button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { scale: .95; filter: brightness(.92); }
+.title-view:active { opacity: .6; }
+.tap-field:not(:disabled):active, button.field:not(:disabled):active, .swipe-body:active, .resume:active, .drawer-foot:active, .bline:active, .now-line:active { scale: none; }
+.tap-field:not(:disabled):active, button.field:not(:disabled):active, .swipe-body:active, .resume:active, .drawer-foot:active { filter: none; background: var(--surface-2); }
+.tabs button:active { scale: .9; }
