@@ -23,6 +23,10 @@ export const docUrl = () => (fileId() ? `https://docs.google.com/document/d/${fi
 export const lastSaved = () => Number(localStorage.getItem(AT_KEY) ?? 0) || 0;
 // 예전 권한으로 연결돼 있어서 드라이브에 쓸 수 없는 상태
 export const needsDriveScope = () => localStorage.getItem(NOSCOPE_KEY) === "1";
+// 구글 클라우드 프로젝트에서 드라이브 API가 꺼져 있어서 저장이 막힌 상태
+export const driveApiOff = () => localStorage.getItem(NOSCOPE_KEY) === "api";
+export const enableUrl = (clientId: string) =>
+  `https://console.cloud.google.com/apis/library/drive.googleapis.com?project=${clientId.split("-")[0]}`;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const stamp = (ts: number) => {
@@ -82,7 +86,7 @@ async function create(token: string, text: string): Promise<string> {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
     body,
   });
-  if (!res.ok) throw Object.assign(new Error("drive " + res.status), { status: res.status });
+  if (!res.ok) throw await fail(res);
   return (await res.json()).id as string;
 }
 
@@ -92,14 +96,21 @@ async function update(token: string, id: string, text: string) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/plain; charset=UTF-8" },
     body: text,
   });
-  if (!res.ok) throw Object.assign(new Error("drive " + res.status), { status: res.status });
+  if (!res.ok) throw await fail(res);
+}
+
+// 403이 권한 부족인지, 드라이브 API가 꺼진 건지 구분한다
+async function fail(res: Response) {
+  const body = await res.text().catch(() => "");
+  const off = /accessNotConfigured|SERVICE_DISABLED|has not been used in project|is disabled/i.test(body);
+  return Object.assign(new Error("drive " + res.status), { status: res.status, off });
 }
 
 let saving = false;
 // 바뀐 게 있을 때만 올린다. 성공하면 true.
-export async function save(token: string, text: string): Promise<boolean> {
+export async function save(token: string, text: string, force = false): Promise<boolean> {
   const h = hash(text.replace(/^대화 \d+개$/m, ""));
-  if (saving || (h === localStorage.getItem(HASH_KEY) && fileId())) return false;
+  if (saving || (!force && h === localStorage.getItem(HASH_KEY) && fileId())) return false;
   saving = true;
   try {
     const id = fileId();
@@ -119,7 +130,7 @@ export async function save(token: string, text: string): Promise<boolean> {
   } catch (e) {
     const s = (e as { status?: number }).status;
     if (s === 403) {
-      store(NOSCOPE_KEY, "1");
+      store(NOSCOPE_KEY, (e as { off?: boolean }).off ? "api" : "1");
       window.dispatchEvent(new Event("drive-saved"));
     }
     return false;

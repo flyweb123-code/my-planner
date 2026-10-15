@@ -8,6 +8,7 @@ import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
 import * as drive from "./drive";
+import { GOOGLE_CLIENT_ID } from "./config";
 import { holidayName } from "./holidays";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
@@ -256,8 +257,11 @@ export default function App() {
 
   const connectCalendar = async () => {
     try {
-      setGToken(await gcal.signIn());
+      const t = await gcal.signIn();
+      setGToken(t);
       setLinked(true);
+      // 다시 연결하면 바로 대화 기록 저장을 시도해 결과(권한 안내)를 곧장 보여 준다
+      drive.save(t, drive.buildText(threads, items, eventChats), true);
     } catch (e) {
       toast((e as Error).message);
     }
@@ -2404,10 +2408,17 @@ function DriveStatus(props: { onConnect: () => void }) {
     window.addEventListener("drive-saved", on);
     return () => window.removeEventListener("drive-saved", on);
   }, []);
+  if (drive.driveApiOff())
+    return (
+      <div className="banner">
+        <span className="grow">구글 클라우드에서 드라이브 기능이 꺼져 있어서 대화 기록을 저장하지 못했어요. 오른쪽 버튼으로 들어가 "사용"을 누른 뒤 앱을 다시 열어 주세요.</span>
+        <a className="btn small" href={drive.enableUrl(GOOGLE_CLIENT_ID)} target="_blank" rel="noreferrer">드라이브 켜기</a>
+      </div>
+    );
   if (drive.needsDriveScope())
     return (
       <div className="banner">
-        <span className="grow">대화 기록을 구글 드라이브에 저장하려면 구글 연결을 한 번 다시 해 주세요.</span>
+        <span className="grow">대화 기록을 드라이브에 저장할 권한이 없어요. 다시 연결할 때 구글 화면에서 "Google Drive" 항목에도 체크해 주세요.</span>
         <button className="btn small" onClick={props.onConnect}>다시 연결</button>
       </div>
     );
