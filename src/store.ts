@@ -34,7 +34,8 @@ export type Item = {
   colorId?: string; // 캘린더 일정 색 (구글 colorId). ""이면 기본 색으로 되돌림, 없으면 건드리지 않음
 };
 // 홈(비서) 대화 하나. Claude 앱처럼 여러 개를 두고 왼쪽 목록에서 고른다.
-export type HomeThread = { id: string; title: string; createdAt: number; updatedAt: number; msgs: Msg[] };
+// titledN: 클론이 제목을 요약해 지었을 때의 메시지 수 (대화가 더 길어지면 다시 짓는다)
+export type HomeThread = { id: string; title: string; createdAt: number; updatedAt: number; msgs: Msg[]; titledN?: number };
 export type Settings = { apiKey: string; model: string };
 
 export const DEFAULT_SETTINGS: Settings = { apiKey: "", model: "claude-opus-5-5" };

@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import { type HomeThread, DEFAULT_SETTINGS, addMinutes, dueLabel, daysUntil, itemEnd, markDeleted, markSeen, seenCount, uid, usePersisted, wasDeletedByUser } from "./store";
 import * as backup from "./backup";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
-import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat } from "./ai";
+import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
@@ -57,6 +57,30 @@ export default function App() {
       }),
     [activeId, setThreads],
   );
+  // 채팅 제목을 대화 내용 요약으로 짓는다. 답이 끝나고 잠시 뒤, 한 번에 하나씩 (기존 채팅도 차례로)
+  const titleFailed = useRef(new Set<string>());
+  useEffect(() => {
+    if (!settings.apiKey) return;
+    const need = threads.find(
+      (t) =>
+        !titleFailed.current.has(t.id) &&
+        t.msgs.length >= 2 &&
+        t.msgs[t.msgs.length - 1].role === "assistant" &&
+        t.msgs[t.msgs.length - 1].text.trim() !== "" &&
+        (t.titledN === undefined || t.msgs.length >= t.titledN + 6),
+    );
+    if (!need) return;
+    const timer = setTimeout(async () => {
+      try {
+        const title = await summarizeTitle(settings, need.msgs);
+        const n = need.msgs.length;
+        setThreads((ts) => ts.map((x) => (x.id === need.id ? { ...x, title: title || x.title || threadTitle(x.msgs), titledN: n } : x)));
+      } catch {
+        titleFailed.current.add(need.id);
+      }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [threads, settings, setThreads]);
   // 다른 화면의 클론이 참고할 최근 홈 대화 (모든 채팅에서 최근 것)
   const recentHome = threads
     .flatMap((t) => t.msgs)
@@ -1446,8 +1470,10 @@ function shrinkImage(file: File, max: number, quality: number): Promise<string> 
 
 /* ---------------- 왼쪽 채팅 목록 ---------------- */
 
+// 클론이 요약한 제목이 생기기 전까지 쓰는 임시 제목 (사진만 보낸 채팅도 빈 줄이 되지 않게)
 const threadTitle = (msgs: Msg[]) => {
-  const first = msgs.find((m) => m.role === "user")?.text ?? "새 채팅";
+  const u = msgs.find((m) => m.role === "user");
+  const first = u?.text.replace(/\s+/g, " ").trim() || (u?.images?.length ? "사진" : "") || "새 채팅";
   return first.length > 30 ? first.slice(0, 30) + "…" : first;
 };
 
@@ -1494,7 +1520,7 @@ function ChatDrawer(props: {
                       onTap={() => props.onPick(t.id)}
                       actions={[{ label: "삭제", cls: "danger", run: () => props.onDelete(t.id) }]}
                     >
-                      <span className={`grow ${t.id === props.activeId ? "on" : ""}`}>{t.title}</span>
+                      <span className={`grow ${t.id === props.activeId ? "on" : ""}`}>{t.title.trim() || threadTitle(t.msgs)}</span>
                     </SwipeRow>
                   ))}
                 </ul>

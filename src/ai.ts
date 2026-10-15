@@ -491,6 +491,26 @@ export async function homeChat(
 }
 
 // 저장한 API 키로 Claude에 닿는지 확인한다. 토큰을 쓰지 않는 모델 조회로 확인.
+/* ---------------- 채팅 제목: 대화 내용을 한눈에 알 수 있게 짧게 요약 ---------------- */
+
+export async function summarizeTitle(s: Settings, msgs: Msg[]): Promise<string> {
+  const clip = (t: string) => (t.length > 300 ? t.slice(0, 300) + "…" : t).replace(/\s+/g, " ");
+  const talk = msgs
+    .slice(-16)
+    .map((m) => `${m.role === "user" ? "사용자" : "클론"}: ${clip(m.text) || (m.images?.length ? "(사진)" : "")}`)
+    .join("\n");
+  const res = await client(s).messages.create({
+    model: BRIEF_MODEL,
+    max_tokens: 60,
+    system:
+      "대화를 보고 채팅 목록에 띄울 제목을 짓는다. 무슨 이야기인지 한눈에 알 수 있게 핵심 대상과 내용을 담은 명사형 한국어 제목으로, 18자 안팎. " +
+      "예: '드레스투어 일정 추가', '이서 일정 다시 넣기', '엄마 환갑 준비 계획'. 따옴표, 마침표, 이모지 없이 제목만 쓴다.",
+    messages: [{ role: "user", content: talk }],
+  });
+  const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim().split("\n")[0];
+  return text.replace(/^["'“‘]+|["'”’.]+$/g, "").trim().slice(0, 30);
+}
+
 export async function checkKey(s: Settings): Promise<string> {
   const m = await client(s).models.retrieve(s.model);
   return m.display_name;
