@@ -27,8 +27,8 @@ declare global {
   }
 }
 
-// 일정 읽기·쓰기 + 캘린더 목록(개인·업무 같은 그룹) 읽기
-const SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+// 일정 읽기·쓰기 + 캘린더 목록(개인·업무 같은 그룹) 읽기 + 앱이 만든 드라이브 문서(대화 기록)만 쓰기
+const SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/drive.file";
 const TOKEN_KEY = "gcal_token";
 const LINKED_KEY = "gcal_linked";
 const SESSION_KEY = "gcal_session"; // 연결 유지 서버가 준 암호화된 새로 고침 열쇠

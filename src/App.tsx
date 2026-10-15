@@ -7,6 +7,7 @@ import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing,
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
+import * as drive from "./drive";
 import { holidayName } from "./holidays";
 import * as widget from "./widget";
 import type { CalEvent } from "./gcal";
@@ -78,6 +79,15 @@ export default function App() {
   const [gToken, setGToken] = useState<string | null>(() => gcal.savedToken());
   const [linked, setLinked] = useState(() => gcal.wasLinked());
   const calOn = !!gToken;
+  // 대화 기록을 구글 드라이브 문서에 저장 (대화가 바뀌고 15초 조용하면)
+  useEffect(() => {
+    if (!linked && !gToken) return;
+    const t = setTimeout(async () => {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (token) drive.save(token, drive.buildText(threads, items, eventChats));
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [threads, items, eventChats, gToken, linked]);
 
   // 대화 화면은 실제로 보이는 영역(키보드를 뺀 높이)에 딱 맞춰 고정한다.
   // 아이폰은 키보드가 올라올 때 화면 전체를 위로 밀어 올리는데, 그러면 입력창이 가려진다.
@@ -2387,6 +2397,35 @@ function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSett
   );
 }
 
+function DriveStatus(props: { onConnect: () => void }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const on = () => tick((n) => n + 1);
+    window.addEventListener("drive-saved", on);
+    return () => window.removeEventListener("drive-saved", on);
+  }, []);
+  if (drive.needsDriveScope())
+    return (
+      <div className="banner">
+        <span className="grow">대화 기록을 구글 드라이브에 저장하려면 구글 연결을 한 번 다시 해 주세요.</span>
+        <button className="btn small" onClick={props.onConnect}>다시 연결</button>
+      </div>
+    );
+  const at = drive.lastSaved();
+  return (
+    <p className="muted small">
+      대화 기록은 구글 드라이브 문서 "클론 대화 기록"에 자동 저장돼요
+      {at ? ` · 마지막 저장 ${new Date(at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : " · 아직 저장 전"}
+      {drive.docUrl() && (
+        <>
+          {" · "}
+          <a href={drive.docUrl()} target="_blank" rel="noreferrer">문서 열기</a>
+        </>
+      )}
+    </p>
+  );
+}
+
 function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount: number; onConnect: () => void; onDisconnect: () => void; onCalendarsChanged: () => void }) {
   const [cals, setCals] = useState(gcal.cachedCalendars());
   useEffect(() => {
@@ -2443,6 +2482,7 @@ function CalendarSettings(props: { calOn: boolean; linked: boolean; eventsCount:
           <button className="btn small" onClick={props.onConnect}>다시 연결</button>
         </div>
       )}
+      {props.calOn && <DriveStatus onConnect={props.onConnect} />}
       {props.calOn && cals.length > 1 && (
         <>
           <label>보여 줄 캘린더</label>
