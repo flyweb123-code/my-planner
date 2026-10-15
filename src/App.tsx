@@ -3414,7 +3414,7 @@ function EventEditor({
       ) : (
         <>
           <InlineTitle value={d.title} onChange={(title) => setD({ ...d, title })} onDone={flush} readOnly={readOnly} placeholder="제목 추가">
-            {todoId && <span className="todo-dot" aria-label="할 일" />}
+            {todoId && !host?.item.done && <span className="todo-dot" aria-label="할 일" />}
             {d.title || "(제목 없음)"}
             {host?.linked && host.item.done && <span className="pill-done">완료</span>}
           </InlineTitle>
@@ -3828,9 +3828,11 @@ function CalendarView(props: {
   const entries: DayEntry[] = [];
   // 일정에 할 일 표시가 빠져 있어도(다른 캘린더로 옮긴 직후 등) 할 일 쪽에 적힌 일정 id로 이어 준다 → 같은 일정이 두 번 안 보이게
   const itemOfEvent = new Map(props.items.filter((i) => i.calendarEventId).map((i) => [i.calendarEventId!, i.id]));
+  // 빨간 점(할 일 표시)은 할 일 목록에 아직 있는 것만: 완료했거나 지운 할 일의 일정은 구글 일정처럼 보인다
+  const liveTodo = new Set(props.items.filter((i) => !i.done).map((i) => i.id));
   for (const e of events) {
     const itemId = e.itemId ?? itemOfEvent.get(e.id);
-    const en: DayEntry = { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: itemId ? "todo" : "google", itemId, ev: itemId && !e.itemId ? { ...e, itemId } : e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId), start: e.date, end: e.endDate && e.endDate > e.date ? e.endDate : e.date };
+    const en: DayEntry = { key: e.id, title: e.title, time: e.time, endTime: e.endTime, kind: itemId && liveTodo.has(itemId) ? "todo" : "google", itemId, ev: itemId && !e.itemId ? { ...e, itemId } : e, color: gcal.colorHex(e.colorId) ?? calColor(e.calendarId), start: e.date, end: e.endDate && e.endDate > e.date ? e.endDate : e.date };
     entries.push(en);
     push(e.date, en);
   }
