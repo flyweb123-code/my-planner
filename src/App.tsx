@@ -1956,8 +1956,27 @@ function ItemView(props: {
 
 /* 할 일 화면의 메모: 평소엔 읽기만, 누르면 그 자리에서 바로 고친다. 다른 곳을 누르면 끝. */
 function MemoField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="fields event-info memo-card">
+      <InlineText label="메모" value={value} onChange={onChange} multiline placeholder="메모 (클론도 같이 봐요)" empty="메모 추가" />
+    </div>
+  );
+}
+
+/* 누르면 그 자리에서 고치는 한 줄(위치·메모 등). 다른 곳을 누르면 끝나고 onDone이 불린다. readOnly면 보기만. */
+function InlineText(props: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onDone?: () => void;
+  multiline?: boolean;
+  placeholder?: string;
+  empty: string;
+  readOnly?: boolean;
+}) {
+  const { value, multiline } = props;
   const [edit, setEdit] = useState(false);
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null);
   useEffect(() => {
     const t = ref.current;
     if (!edit || !t) return;
@@ -1966,24 +1985,65 @@ function MemoField({ value, onChange }: { value: string; onChange: (v: string) =
   }, [edit]);
   useEffect(() => {
     const t = ref.current;
-    if (!t) return;
+    if (!t || !multiline) return;
     t.style.height = "auto";
     t.style.height = `${t.scrollHeight}px`;
-  }, [edit, value]);
+  }, [edit, value, multiline]);
+  const finish = () => (setEdit(false), props.onDone?.());
+  if (edit)
+    return (
+      <div className={`field memo-edit${multiline ? " info-desc" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <span className="info-label">{props.label}</span>
+        {multiline ? (
+          <textarea ref={ref} className="grow" placeholder={props.placeholder} value={value} onChange={(e) => props.onChange(e.target.value)} onBlur={finish} />
+        ) : (
+          <input
+            ref={ref}
+            className="grow"
+            placeholder={props.placeholder}
+            value={value}
+            onChange={(e) => props.onChange(e.target.value)}
+            onBlur={finish}
+            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
+          />
+        )}
+      </div>
+    );
+  if (props.readOnly)
+    return value.trim() ? (
+      <div className={`field${multiline ? " info-desc" : ""}`}>
+        <span className="info-label">{props.label}</span>
+        <span className="grow">{value}</span>
+      </div>
+    ) : null;
   return (
-    <div className="fields event-info memo-card">
-      {edit ? (
-        <div className="field info-desc memo-edit">
-          <span className="info-label">메모</span>
-          <textarea ref={ref} className="grow" placeholder="메모 (클론도 같이 봐요)" value={value} onChange={(e) => onChange(e.target.value)} onBlur={() => setEdit(false)} />
-        </div>
-      ) : (
-        <button className="field tap-field info-desc" onClick={() => setEdit(true)} aria-label="메모 수정">
-          <span className="info-label">메모</span>
-          <span className={`grow ${value.trim() ? "" : "muted"}`}>{value.trim() ? value : "메모 추가"}</span>
-        </button>
-      )}
-    </div>
+    <button className={`field tap-field${multiline ? " info-desc" : ""}`} onClick={(e) => (e.stopPropagation(), setEdit(true))} aria-label={`${props.label} 수정`}>
+      <span className="info-label">{props.label}</span>
+      <span className={`grow ${value.trim() ? "" : "muted"}`}>{value.trim() ? value : props.empty}</span>
+    </button>
+  );
+}
+
+/* 누르면 그 자리에서 고치는 큰 제목 */
+function InlineTitle(props: { value: string; onChange: (v: string) => void; onDone?: () => void; readOnly?: boolean; placeholder: string; className?: string; children?: React.ReactNode }) {
+  const [edit, setEdit] = useState(false);
+  if (edit)
+    return (
+      <input
+        className="title-input"
+        autoFocus
+        placeholder={props.placeholder}
+        value={props.value}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => props.onChange(e.target.value)}
+        onBlur={() => (setEdit(false), props.onDone?.())}
+        onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
+      />
+    );
+  return (
+    <h1 className={`title-view ${props.className ?? ""}`} onClick={() => !props.readOnly && setEdit(true)}>
+      {props.children}
+    </h1>
   );
 }
 
@@ -2902,6 +2962,42 @@ function EventEditor({
       toast(`캘린더를 옮기지 못했어요: ${(e as Error).message}`);
     }
   };
+  // 일정 화면에서 항목을 눌러 바로 고친 내용은 잠깐 뒤(또는 칸을 벗어날 때) 구글 캘린더에 저장한다
+  const [pickTime, setPickTime] = useState(false);
+  const quick = !editing && !isNew && !readOnly;
+  const same = (a: gcal.EventEdit, b: gcal.EventEdit) => JSON.stringify(a) === JSON.stringify(b);
+  const savedRef = useRef(original);
+  savedRef.current = original;
+  const pending = useRef<gcal.EventEdit | null>(null);
+  const quickSave = async (next: gcal.EventEdit) => {
+    pending.current = null;
+    const prev = savedRef.current;
+    if (!next.title.trim() || same(next, prev)) return;
+    savedRef.current = next;
+    setOriginal(next);
+    try {
+      const token = gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+      await gcal.updateEvent(token, ev.id, next, next.calendarId ?? ev.calendarId);
+      onSavedEdit(next);
+      onChanged?.();
+    } catch (e) {
+      savedRef.current = prev;
+      setOriginal(prev);
+      toast(`구글 캘린더에 저장하지 못했어요: ${(e as Error).message}`);
+    }
+  };
+  const flush = () => pending.current && quickSave(pending.current);
+  useEffect(() => {
+    if (!quick || same(d, original)) return void (pending.current = null);
+    pending.current = d;
+    const t = setTimeout(() => quickSave(d), 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d, quick]);
+  // 저장 전에 화면을 닫으면 그때 저장
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => void flush(), []);
   const run = async (fn: (token: string) => Promise<unknown>, done: string) => {
     setBusy(true);
     try {
@@ -3012,17 +3108,22 @@ function EventEditor({
         </>
       ) : (
         <>
-          <h1 className="title-view">
+          <InlineTitle value={d.title} onChange={(title) => setD({ ...d, title })} onDone={flush} readOnly={readOnly} placeholder="제목 추가">
             {todoId && <span className="todo-dot" aria-label="할 일" />}
             {d.title || "(제목 없음)"}
             {host?.linked && host.item.done && <span className="pill-done">완료</span>}
-          </h1>
+          </InlineTitle>
           <div className="fields event-info">
-            <button className="field tap-field" onClick={() => !readOnly && setEditing(true)} aria-label="시간 수정">
+            <button className="field tap-field" onClick={(e) => (e.stopPropagation(), !readOnly && (pickTime && flush(), setPickTime(!pickTime)))} aria-label="시간 수정" aria-expanded={pickTime}>
               <span className="sched-icon"><IconClock /></span>
               <span className="grow">{schedText(d)}</span>
-              {!readOnly && <span className="chev"><IconRight /></span>}
+              {!readOnly && <span className={`chev${pickTime ? " open" : ""}`}><IconRight /></span>}
             </button>
+            {pickTime && (
+              <div className="inline-sched" onClick={(e) => e.stopPropagation()}>
+                <ScheduleEditor item={d} update={(fn) => setD(fn)} noClear />
+              </div>
+            )}
             {cal && gcal.cachedCalendars().length > 1 && (
               <>
                 <button className="field tap-field" disabled={busy} onClick={(e) => (e.stopPropagation(), !readOnly && setPickCal(!pickCal))} aria-label="캘린더 바꾸기" aria-expanded={pickCal}>
@@ -3048,18 +3149,8 @@ function EventEditor({
                 )}
               </>
             )}
-            {d.location && (
-              <div className="field">
-                <span className="info-label">위치</span>
-                <span className="grow">{d.location}</span>
-              </div>
-            )}
-            {d.description && (
-              <div className="field info-desc">
-                <span className="info-label">메모</span>
-                <span className="grow">{d.description}</span>
-              </div>
-            )}
+            <InlineText label="위치" value={d.location} onChange={(location) => setD({ ...d, location })} onDone={flush} placeholder="위치 추가" empty="위치 추가" readOnly={readOnly} />
+            <InlineText label="메모" value={d.description} onChange={(description) => setD({ ...d, description })} onDone={flush} multiline placeholder="메모 추가" empty="메모 추가" readOnly={readOnly} />
           </div>
         </>
       )}
@@ -3090,6 +3181,7 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [pickTime, setPickTime] = useState(false);
   const set = (patch: Partial<Subtask>) =>
     props.update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === sub.id ? { ...x, ...patch } : x)) }));
   const toggle = () => set({ done: !sub.done });
@@ -3139,21 +3231,22 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
         </>
       ) : (
         <>
-          <h1 className={`title-view ${sub.done ? "is-done" : ""}`}>
+          <InlineTitle value={sub.title} onChange={(title) => set({ title })} placeholder="세부 업무 이름" className={sub.done ? "is-done" : ""}>
             {sub.title || "(이름 없음)"}
             {sub.done && <span className="pill-done">완료</span>}
-          </h1>
+          </InlineTitle>
           <div className="fields event-info">
-            <button className="field tap-field" onClick={() => setEditing(true)} aria-label="일정 수정">
+            <button className="field tap-field" onClick={(e) => (e.stopPropagation(), setPickTime(!pickTime))} aria-label="일정 수정" aria-expanded={pickTime}>
               <span className="sched-icon"><IconClock /></span>
               <span className={`grow ${sub.due ? "" : "muted"}`}>{sub.due ? schedText(sub as Sched) : "일정 추가"}</span>
-              <span className="chev"><IconRight /></span>
+              <span className={`chev${pickTime ? " open" : ""}`}><IconRight /></span>
             </button>
-            <button className="field tap-field info-desc" onClick={() => setEditing(true)} aria-label="메모 수정">
-              <span className="info-label">메모</span>
-              <span className={`grow ${sub.note ? "" : "muted"}`}>{sub.note || "메모 추가"}</span>
-              <span className="chev"><IconRight /></span>
-            </button>
+            {pickTime && (
+              <div className="inline-sched" onClick={(e) => e.stopPropagation()}>
+                <ScheduleEditor item={{ due: sub.due ?? "", time: sub.time, endDate: sub.endDate, endTime: sub.endTime }} update={(fn) => set(fn({ due: sub.due ?? "", time: sub.time, endDate: sub.endDate, endTime: sub.endTime }))} />
+              </div>
+            )}
+            <InlineText label="메모" value={sub.note ?? ""} onChange={(note) => set({ note })} multiline placeholder="메모 추가" empty="메모 추가" />
           </div>
           <EventFiles owner={sub.id} />
         </>

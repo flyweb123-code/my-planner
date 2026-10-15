@@ -585,4 +585,8 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 .event-info .tap-field .grow, .preview { white-space: pre-line; text-align: left; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
 
 /* 할 일 화면 메모: 누르면 그 자리에서 고치기 */
-.memo-card .memo-edit textarea { border: 0; background: none; padding: 0; margin: 0; min-height: 22px; resize: none; overflow: hidden; font: inherit; line-height: 1.5; color: var(--text); outline: none; box-shadow: none; }
+.event-info .memo-edit textarea, .event-info .memo-edit input { border: 0; background: none; padding: 0; margin: 0; min-height: 22px; resize: none; overflow: hidden; font: inherit; line-height: 1.5; color: var(--text); outline: none; box-shadow: none; }
+.event-info .memo-edit input { padding: 0; min-height: 0; line-height: 1.5; }
+.inline-sched { border-top: 1px solid var(--line); }
+.inline-sched > .field { border-top: 0; }
+.title-view { cursor: text; }
