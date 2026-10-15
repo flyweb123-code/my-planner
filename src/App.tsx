@@ -1687,24 +1687,45 @@ function useStickToBottom(endRef: React.RefObject<HTMLDivElement | null>, deps: 
   useEffect(() => {
     const box = endRef.current?.parentElement;
     if (!box) return;
+    const vv = window.visualViewport;
     const toEnd = () => (box.scrollTop = box.scrollHeight);
-    const onScroll = () => (atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 60);
-    const ro = new ResizeObserver(() => atBottom.current && toEnd());
+    // 입력칸을 누른 뒤 키보드가 다 올라올 때까지는 무조건 맨 아래에 붙여 둔다.
+    // (키보드가 올라오며 높이가 줄어드는 동안 생기는 스크롤 알림 때문에 '맨 아래가 아님'으로 잘못 판단하지 않게)
+    let pinUntil = 0;
+    const pinned = () => Date.now() < pinUntil;
+    const onScroll = () => {
+      if (pinned()) return;
+      atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    };
+    const follow = () => (pinned() || atBottom.current) && toEnd();
+    const ro = new ResizeObserver(follow);
     ro.observe(box);
     box.addEventListener("scroll", onScroll, { passive: true });
-    // 입력칸을 누르면 맨 아래 대화로 한 번에 내려간다 (키보드가 올라오며 높이가 바뀌는 동안에도 맨 아래 유지)
+    vv?.addEventListener("resize", follow);
+    vv?.addEventListener("scroll", follow);
+    // 사용자가 직접 대화를 끌어 올리면 그때부터는 붙잡지 않는다.
+    const release = () => (pinUntil = 0);
+    box.addEventListener("touchstart", release, { passive: true });
+    box.addEventListener("wheel", release, { passive: true });
+    // 입력칸을 누르면 맨 아래 대화가 입력칸 바로 위에 오도록 내려간다.
     const root = box.closest(".homechat, .chatview");
     const onFocus = (e: Event) => {
       if (!(e.target instanceof HTMLTextAreaElement)) return;
       atBottom.current = true;
+      pinUntil = Date.now() + 1500;
       toEnd();
-      [60, 160, 320, 620].forEach((ms) => setTimeout(() => atBottom.current && toEnd(), ms));
+      requestAnimationFrame(toEnd);
+      [60, 160, 320, 500, 800, 1100, 1500].forEach((ms) => setTimeout(follow, ms));
     };
     root?.addEventListener("focusin", onFocus);
     toEnd();
     return () => {
       ro.disconnect();
       box.removeEventListener("scroll", onScroll);
+      vv?.removeEventListener("resize", follow);
+      vv?.removeEventListener("scroll", follow);
+      box.removeEventListener("touchstart", release);
+      box.removeEventListener("wheel", release);
       root?.removeEventListener("focusin", onFocus);
     };
   }, [endRef]);
