@@ -662,3 +662,8 @@ body.ev-drag { -webkit-user-select: none; user-select: none; }
 .title-view { display: block; text-wrap: wrap; word-break: keep-all; }
 .title-view .todo-dot { width: 8px; height: 8px; margin-right: 8px; top: -4px; }
 .title-view .pill-done { display: inline-block; vertical-align: middle; margin-left: 8px; position: relative; top: -3px; }
+
+/* 세부 업무 칩: 꾹 눌러 끌어 순서 바꾸기 */
+.sub-drag { -webkit-touch-callout: none; }
+.sub-drag.dragging { z-index: 20; scale: 1.03; box-shadow: var(--shadow); pointer-events: none; transition: none; }
+.sub-cards > li.drop-mark { background: none; border: 0; overflow: visible; }

@@ -2227,6 +2227,15 @@ function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: 
     update((it) => ({ ...it, subtasks: [...it.subtasks, { id: uid(), title, done: false, byClaude: false, createdAt: Date.now() }] }));
   const toggleSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.map((x) => (x.id === id ? { ...x, done: !x.done } : x)) }));
   const removeSub = (id: string) => update((it) => ({ ...it, subtasks: it.subtasks.filter((x) => x.id !== id) }));
+  const drag = useSubDrag((id, index) =>
+    update((it) => {
+      const s = it.subtasks.find((x) => x.id === id);
+      if (!s) return it;
+      const rest = it.subtasks.filter((x) => x.id !== id);
+      rest.splice(Math.min(index, rest.length), 0, s);
+      return { ...it, subtasks: rest };
+    }),
+  );
   const submit = () => {
     const t = newSub.trim();
     if (t) addSub(t);
@@ -2239,12 +2248,14 @@ function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: 
         <h3>세부 업무</h3>
       </div>
       <ul className="sub-cards">
-        {item.subtasks.map((s) => (
+        {drag.withMark(item.subtasks.map((s) => (
           <SwipeRow
             key={s.id}
             open={swiped === s.id}
             onOpenChange={(o) => setSwiped(o ? s.id : null)}
             onTap={() => onOpenSub(s.id)}
+            held={drag.held}
+            li={drag.liProps(s.id, () => setSwiped(null))}
             actions={[
               { label: s.done ? "되돌리기" : "완료", cls: "ok", run: () => toggleSub(s.id) },
               { label: "삭제", cls: "danger", run: () => removeSub(s.id) },
@@ -2257,7 +2268,7 @@ function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: 
             </span>
             <span className="chev"><IconRight /></span>
           </SwipeRow>
-        ))}
+        )), item.subtasks.map((s) => s.id))}
         {adding && (
           <li className="sub-new">
             <input
@@ -2283,6 +2294,122 @@ function SubtaskSection({ item, update, onOpenSub }: { item: Item; update: (fn: 
   );
 }
 
+/* 세부 업무 칩을 꾹 눌러(0.45초) 위아래로 끌어 순서 바꾸기. 끄는 동안 칩은 화면에 고정해 손가락을 따라가고,
+   놓일 자리에 파란 선을 보인다. onDrop(id, index): index는 끄는 칩을 뺀 목록에서의 자리. */
+function useSubDrag(onDrop: (id: string, index: number) => void) {
+  type Drag = { id: string; gy: number; left: number; width: number; y: number; index: number; ul: HTMLElement };
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const press = useRef<{ t: number; x: number; y: number } | null>(null);
+  const justDragged = useRef(false);
+  const dropRef = useRef(onDrop);
+  dropRef.current = onDrop;
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current.t);
+    press.current = null;
+  };
+  const indexAt = (ul: HTMLElement, id: string, y: number) =>
+    [...ul.querySelectorAll<HTMLElement>(":scope > li[data-id]")].filter((li) => li.dataset.id !== id && (() => {
+      const r = li.getBoundingClientRect();
+      return r.top + r.height / 2 < y;
+    })()).length;
+  const startPress = (id: string, li: HTMLElement, x: number, y: number, closeSwipe: () => void) => {
+    cancelPress();
+    const t = window.setTimeout(() => {
+      press.current = null;
+      const ul = li.parentElement;
+      if (!ul) return;
+      closeSwipe();
+      const r = li.getBoundingClientRect();
+      const d: Drag = { id, gy: y - r.top, left: r.left, width: r.width, y, index: indexAt(ul, id, y), ul };
+      dragRef.current = d;
+      setDrag(d);
+      document.body.classList.add("ev-drag");
+      navigator.vibrate?.(12);
+    }, 450);
+    press.current = { t, x, y };
+  };
+  useEffect(() => {
+    let raf = 0;
+    const move = (x: number, y: number, ev?: Event) => {
+      const p = press.current;
+      if (p && Math.hypot(x - p.x, y - p.y) > 8) cancelPress();
+      const d = dragRef.current;
+      if (!d) return;
+      ev?.preventDefault();
+      const next = { ...d, y, index: indexAt(d.ul, d.id, y) };
+      dragRef.current = next;
+      setDrag(next);
+    };
+    const end = () => {
+      cancelPress();
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      setDrag(null);
+      document.body.classList.remove("ev-drag");
+      justDragged.current = true;
+      setTimeout(() => (justDragged.current = false), 300);
+      dropRef.current(d.id, d.index);
+    };
+    // 화면 위·아래 끝에 가까이 끌면 저절로 스크롤
+    const tick = () => {
+      const d = dragRef.current;
+      if (d) {
+        const v = d.y < 110 ? -(110 - d.y) / 5 : d.y > window.innerHeight - 150 ? (d.y - (window.innerHeight - 150)) / 5 : 0;
+        if (v) {
+          window.scrollBy(0, v);
+          const next = { ...d, index: indexAt(d.ul, d.id, d.y) };
+          dragRef.current = next;
+          setDrag(next);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    const tm = (e: TouchEvent) => move(e.touches[0].clientX, e.touches[0].clientY, e);
+    const mm = (e: MouseEvent) => move(e.clientX, e.clientY, e);
+    document.addEventListener("touchmove", tm, { passive: false });
+    document.addEventListener("touchend", end);
+    document.addEventListener("touchcancel", end);
+    document.addEventListener("mousemove", mm);
+    document.addEventListener("mouseup", end);
+    return () => {
+      cancelAnimationFrame(raf);
+      cancelPress();
+      document.removeEventListener("touchmove", tm);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("touchcancel", end);
+      document.removeEventListener("mousemove", mm);
+      document.removeEventListener("mouseup", end);
+      document.body.classList.remove("ev-drag");
+    };
+  }, []);
+  return {
+    held: () => dragRef.current !== null || justDragged.current,
+    liProps: (id: string, closeSwipe: () => void) => {
+      const on = drag?.id === id;
+      return {
+        "data-id": id,
+        className: `sub-drag${on ? " dragging" : ""}`,
+        style: on ? { position: "fixed" as const, top: drag.y - drag.gy, left: drag.left, width: drag.width } : undefined,
+        onTouchStart: (t: React.TouchEvent<HTMLLIElement>) => startPress(id, t.currentTarget, t.touches[0].clientX, t.touches[0].clientY, closeSwipe),
+        onMouseDown: (m: React.MouseEvent<HTMLLIElement>) => m.button === 0 && startPress(id, m.currentTarget, m.clientX, m.clientY, closeSwipe),
+        onContextMenu: (c: React.MouseEvent) => c.preventDefault(),
+      };
+    },
+    // 놓일 자리 표시선을 끼워 넣는다 (index는 끄는 칩을 뺀 목록 기준 → 화면 목록에서의 자리로 바꿈)
+    withMark: (rows: React.ReactNode[], ids: string[]) => {
+      if (!drag) return rows;
+      const self = ids.indexOf(drag.id);
+      const at = self >= 0 && drag.index >= self ? drag.index + 1 : drag.index;
+      const out = [...rows];
+      out.splice(at, 0, <li key="__mark" className="drop-mark" aria-hidden="true" />);
+      return out;
+    },
+  };
+}
+
 /* 왼쪽으로 밀면 뒤에 숨은 버튼이 드러나는 줄 */
 function SwipeRow(props: {
   open: boolean;
@@ -2290,6 +2417,9 @@ function SwipeRow(props: {
   onTap: () => void;
   actions: { label: string; cls: string; run: () => void }[];
   children: React.ReactNode;
+  // 꾹 눌러 끌어 옮기는 중이면 true: 그동안은 밀기·누르기를 하지 않는다
+  held?: () => boolean;
+  li?: React.LiHTMLAttributes<HTMLLIElement> & { "data-id"?: string };
 }) {
   const W = 76 * props.actions.length;
   const [dx, setDx] = useState<number | null>(null);
@@ -2298,7 +2428,7 @@ function SwipeRow(props: {
   const offset = dx ?? (props.open ? -W : 0);
 
   return (
-    <li className="swipe" onClick={(e) => e.stopPropagation()}>
+    <li {...props.li} className={`swipe ${props.li?.className ?? ""}`} onClick={(e) => e.stopPropagation()}>
       <div className="swipe-actions" style={{ width: W, visibility: offset < 0 ? "visible" : "hidden" }}>
         {props.actions.map((a) => (
           <button key={a.label} className={a.cls} onClick={() => (a.run(), props.onOpenChange(false))}>
@@ -2316,6 +2446,10 @@ function SwipeRow(props: {
         onPointerMove={(e) => {
           const s = start.current;
           if (!s) return;
+          if (props.held?.()) {
+            start.current = null;
+            return setDx(null);
+          }
           const mx = e.clientX - s.x;
           const my = e.clientY - s.y;
           if (!s.dir) {
@@ -2330,6 +2464,7 @@ function SwipeRow(props: {
         onPointerUp={() => {
           const s = start.current;
           start.current = null;
+          if (props.held?.()) return setDx(null);
           if (moved.current && dx !== null) {
             props.onOpenChange(dx < -W / 2);
             setDx(null);
