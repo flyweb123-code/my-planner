@@ -657,3 +657,8 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 body.ev-drag { -webkit-user-select: none; user-select: none; }
 .day-panel.empty-day .evlist { min-height: 6px; }
 .day-panel.drop-on h3 { color: var(--accent); }
+
+/* 큰 제목: h1 기본의 text-wrap: balance(두 줄 길이를 맞추려 일찍 줄 바꿈)를 끄고, 단어 중간에서 안 끊기게. 앞의 빨간 점·뒤의 '완료'를 글자와 같은 줄에 두어 제목이 화면 끝까지 쓰고 줄 바꿈 */
+.title-view { display: block; text-wrap: wrap; word-break: keep-all; }
+.title-view .todo-dot { width: 8px; height: 8px; margin-right: 8px; top: -4px; }
+.title-view .pill-done { display: inline-block; vertical-align: middle; margin-left: 8px; position: relative; top: -3px; }
