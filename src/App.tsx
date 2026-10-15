@@ -1576,7 +1576,6 @@ function ChatDrawer(props: {
 function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: (fn: (a: Item[]) => Item[]) => void; onOpen: (id: string) => void; onRemove: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
-  const [showDone, setShowDone] = useState(false);
   const [adding, setAdding] = useState(false);
   const [swiped, setSwiped] = useState<string | null>(null);
 
@@ -1622,7 +1621,6 @@ function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: 
 
   const sorted = [...items].sort((a, b) => (daysUntil(a.due) ?? 9999) - (daysUntil(b.due) ?? 9999) || b.createdAt - a.createdAt);
   const open = sorted.filter((i) => !i.done);
-  const done = sorted.filter((i) => i.done);
 
   return (
     <section onClick={() => setSwiped(null)}>
@@ -1641,16 +1639,6 @@ function List({ items, setItems, onOpen, onRemove }: { items: Item[]; setItems: 
       <button className={`sub-add list-add ${adding ? "on" : ""}`} aria-label={adding ? "닫기" : "할 일 추가"} onClick={(e) => (e.stopPropagation(), setAdding(!adding))}>
         <IconPlus />
       </button>
-      {done.length > 0 && (
-        <>
-          <button className="link" onClick={() => setShowDone(!showDone)}>
-            완료한 일 {done.length}개 {showDone ? "접기" : "보기"}
-          </button>
-          {showDone && (
-            <ul className="items done">{done.map(row)}</ul>
-          )}
-        </>
-      )}
     </section>
   );
 }
