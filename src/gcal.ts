@@ -431,7 +431,8 @@ async function fetchCalendarRange(token: string, calId: string, from: Date, to: 
     endTime: e.end.dateTime ? hm(e.end.dateTime) : "",
     endDate: e.end.dateTime ? localDate(new Date(e.end.dateTime)) : prevDay(e.end.date!),
     location: e.location ?? "",
-    description: e.description ?? "",
+    // 예전에 자동으로 넣던 문구는 메모가 없는 것으로 본다
+    description: e.description === AUTO_NOTE ? "" : e.description ?? "",
     itemId: e.extendedProperties?.private?.plannerItemId,
     colorId: e.colorId,
     calendarId: calId,
@@ -459,13 +460,16 @@ export async function updateEvent(token: string, eventId: string, e: EventEdit, 
   });
 }
 
+const AUTO_NOTE = "클론 앱에서 추가한 할 일";
+
 type ItemLike = { id: string; title: string; due: string; time?: string; endDate?: string; endTime?: string; colorId?: string; calendarId?: string };
 
 // 할 일 하나를 캘린더 일정 모양으로. 시간이 있으면 시작~종료, 없으면 종일 일정.
 function body(it: ItemLike) {
   const base = {
     summary: it.title,
-    description: "클론 앱에서 추가한 할 일",
+    // 설명(메모)은 비워 둔다. 예전엔 "클론 앱에서 추가한 할 일"을 자동으로 넣었다 (사용자 요청으로 뺌, 2026-10-15)
+    description: "",
     extendedProperties: { private: { plannerItemId: it.id } },
     // 색을 고른 적이 있을 때만 보낸다. ""(기본 색)는 null로 보내야 구글에서 색이 지워진다.
     ...(it.colorId === undefined ? {} : { colorId: it.colorId || null }),
