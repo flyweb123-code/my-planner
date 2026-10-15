@@ -1268,16 +1268,17 @@ function HomeChat(props: {
       return {};
     }
   });
-  const snoozeKey = (m: { text: string; item_id: string }) => m.item_id || m.text;
-  const hide = (m: { text: string; item_id: string }) => {
-    const next = { ...snooze, [snoozeKey(m)]: Date.now() + 6 * 3600000 };
+  const snoozeKey = (m: { text: string; item_id: string; event_id?: string }) => m.item_id || m.event_id || m.text;
+  // 삭제: 이 '확인할 것'을 다시 안 띄운다 (할 일·일정 자체는 지우지 않음). 1년 숨김으로 처리
+  const hide = (m: { text: string; item_id: string; event_id?: string }, forever = false) => {
+    const next = { ...snooze, [snoozeKey(m)]: Date.now() + (forever ? 365 * 86400000 : 6 * 3600000) };
     setSnooze(next);
     try {
       localStorage.setItem("briefSnooze", JSON.stringify(next));
     } catch {
       /* 무시 */
     }
-    toast("6시간 동안 숨겼어요");
+    toast(forever ? "확인할 것에서 지웠어요" : "6시간 동안 숨겼어요");
   };
   const [swipedBrief, setSwipedBrief] = useState<string | null>(null);
   const checks = brief ? brief.check.filter((m) => !(snooze[snoozeKey(m)] > Date.now())) : [];
@@ -1308,7 +1309,7 @@ function HomeChat(props: {
           {checks.length > 0 && (
             <div className="bgroup">
               <p className="label">
-                확인할 것 <span className="label-hint">왼쪽으로 밀면 잠시 숨겨요</span>
+                확인할 것 <span className="label-hint">왼쪽으로 밀면 숨기거나 지워요</span>
               </p>
               <ul className="blist">
                 {checks.map((m, i) => (
@@ -1317,7 +1318,10 @@ function HomeChat(props: {
                     open={swipedBrief === `${i}-${m.text}`}
                     onOpenChange={(o) => setSwipedBrief(o ? `${i}-${m.text}` : null)}
                     onTap={() => tapBrief(m)}
-                    actions={[{ label: "나중에", cls: "later", run: () => hide(m) }]}
+                    actions={[
+                      { label: "나중에", cls: "later", run: () => hide(m) },
+                      { label: "삭제", cls: "danger", run: () => hide(m, true) },
+                    ]}
                   >
                     <BriefText m={m} pad={checks.some((x) => briefDate(x).date)} />
                     <span className="chev"><IconRight /></span>
