@@ -675,7 +675,7 @@ export default function App() {
   // 홈 브리핑 줄 → 할 일 화면 또는 캘린더 일정 화면
   const openBrief = (m: { item_id?: string; event_id?: string }) => {
     const it = m.item_id ? items.find((i) => i.id === m.item_id) : undefined;
-    const ev = !it && m.event_id ? events.find((e) => e.id === m.event_id) : undefined;
+    const ev = !it && m.event_id ? events.find((e) => e.id === m.event_id) ?? createdEvents.current.get(m.event_id) : undefined;
     if (!it && !ev) return false;
     // 밀어서 돌아갈 때 뒤에 보여 줄 홈 화면을 지금 모습 그대로 복사해 둔다
     homeSnap = snapScreen(mainRef.current);
@@ -1193,6 +1193,13 @@ function HomeChat(props: {
     }
   };
 
+  // 클론이 한 일 칩을 누르면 그 할 일 / 캘린더 일정 화면으로 간다 (지운 것·되돌린 것은 제외)
+  const actTarget = (a: Action): { item_id?: string; event_id?: string } | null => {
+    if (a.undone || !a.undo || a.kind === "event_delete") return null;
+    if (a.kind === "event" || a.kind === "event_update") return a.undo.eventId ? { event_id: a.undo.eventId } : null;
+    return a.undo.itemId ? { item_id: a.undo.itemId } : null;
+  };
+
   const undo = (mi: number, ai: number) => {
     const a = chat[mi]?.actions?.[ai];
     if (!a || a.undone) return;
@@ -1353,13 +1360,21 @@ function HomeChat(props: {
               {m.actions && (
                 <div className="actions">
                   {m.actions.map((a, j) => (
-                    <div key={j} className={`act ${a.undone ? "undone" : ""}`}>
+                    <div
+                      key={j}
+                      className={`act ${a.undone ? "undone" : ""}${actTarget(a) ? " tappable" : ""}`}
+                      onClick={() => {
+                        const t = actTarget(a);
+                        if (t && !props.onOpenBrief(t)) toast("그 항목을 찾지 못했어요");
+                      }}
+                    >
                       <span className="tick">{a.undone ? "↩" : "✓"}</span>
                       <span className="grow">
                         {a.text}
                       </span>
+                      {actTarget(a) && <span className="chev">›</span>}
                       {a.undo && !a.undone && (
-                        <button className="link small" onClick={() => undo(i, j)}>
+                        <button className="link small" onClick={(e) => (e.stopPropagation(), undo(i, j))}>
                           되돌리기
                         </button>
                       )}

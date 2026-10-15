@@ -167,6 +167,8 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .act .tick { color: var(--todo); font-weight: 800; }
 .act.undone { opacity: .5; } .act.undone .grow { text-decoration: line-through; }
 .act .link { padding: 0; font-size: 13px; }
+.act.tappable { cursor: pointer; } .act.tappable:active { background: var(--line); }
+.act .chev { color: var(--muted); font-size: 18px; line-height: 1; align-self: center; }
 .reconnect { width: 100%; background: var(--warn-soft); color: var(--warn); font-size: 14px; margin-bottom: 8px; border-radius: var(--r); }
 
 /* 홈 첫 메시지: 비서 브리핑 */
