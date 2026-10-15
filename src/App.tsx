@@ -4068,23 +4068,45 @@ function CalendarView(props: {
   });
   // 달력 칩 배치: 주(7칸)마다 일정을 줄(lane)에 차례로 넣는다. 칸 높이에 들어가는 줄 수만 그리고 나머지는 '+n'
   const chipCount = rowH >= 68 ? 2 : rowH >= 48 ? 1 : 0;
+  // 칸에 칩이 다 안 들어가는 날(일정 수 > 칩 줄 수)은 글자 없이 색 막대로만 보여 준다
+  const MINI_MAX = 4;
   const hiddenByDay = new Map<string, number>();
+  const miniByDay = new Map<string, DayEntry[]>();
   const weekBars: { e: DayEntry; from: number; to: number; lane: number; contL: boolean; contR: boolean }[][] = [];
   for (let w = 0; w < cells.length / 7; w++) {
     const days = cells.slice(w * 7, w * 7 + 7).map(ymd);
     const first = days[0], last = days[6];
     const inWeek = entries.filter((e) => e.start <= last && e.end >= first).sort(orderIn);
+    const packed = days.map((d) => chipCount > 0 && inWeek.filter((e) => e.start <= d && e.end >= d).length > chipCount);
     const used: boolean[][] = [];
     const bars: (typeof weekBars)[number] = [];
-    for (const e of inWeek) {
-      const from = Math.max(0, days.indexOf(e.start < first ? first : e.start));
-      const to = Math.min(6, e.end > last ? 6 : days.indexOf(e.end));
+    const place = (e: DayEntry, from: number, to: number, contL: boolean, contR: boolean) => {
       let lane = 0;
       while (used[lane]?.slice(from, to + 1).some(Boolean)) lane++;
       used[lane] ??= Array(7).fill(false);
       for (let i = from; i <= to; i++) used[lane][i] = true;
-      if (lane < chipCount) bars.push({ e, from, to, lane, contL: e.start < first, contR: e.end > last });
+      if (lane < chipCount) bars.push({ e, from, to, lane, contL, contR });
       else for (let i = from; i <= to; i++) hiddenByDay.set(days[i], (hiddenByDay.get(days[i]) ?? 0) + 1);
+    };
+    for (const e of inWeek) {
+      const from = Math.max(0, days.indexOf(e.start < first ? first : e.start));
+      const to = Math.min(6, e.end > last ? 6 : days.indexOf(e.end));
+      // 꽉 찬 날은 막대로, 나머지 날은 이어진 칩으로 나눠 그린다
+      let runFrom = -1;
+      for (let i = from; i <= to + 1; i++) {
+        if (i <= to && packed[i]) {
+          const list = miniByDay.get(days[i]) ?? [];
+          if (list.length < MINI_MAX) list.push(e);
+          else hiddenByDay.set(days[i], (hiddenByDay.get(days[i]) ?? 0) + 1);
+          miniByDay.set(days[i], list);
+        }
+        if (i <= to && !packed[i]) {
+          if (runFrom < 0) runFrom = i;
+        } else if (runFrom >= 0) {
+          place(e, runFrom, i - 1, runFrom > from || e.start < first, i - 1 < to || e.end > last);
+          runFrom = -1;
+        }
+      }
     }
     weekBars.push(bars);
   }
@@ -4315,6 +4337,13 @@ function CalendarView(props: {
                 >
                   <span className="num">{d.getDate()}</span>
                   {hidden > 0 && (chipCount === 2 ? <span className="more">+{hidden}</span> : <span className="more-dot" aria-label={`일정 ${hidden}개 더`} />)}
+                  {miniByDay.has(k) && (
+                    <span className="mini-bars" aria-label={`일정 ${miniByDay.get(k)!.length + hidden}개`}>
+                      {miniByDay.get(k)!.map((e) => (
+                        <span key={e.key} className={`mini-bar ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} />
+                      ))}
+                    </span>
+                  )}
                 </button>
               );
             })}

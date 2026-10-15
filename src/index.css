@@ -583,6 +583,10 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 .cell { position: relative; }
 .cell .more { position: absolute; top: 9px; right: 3px; padding: 0; }
 .cell .more-dot { position: absolute; top: 13px; right: 6px; margin: 0; }
+/* 칩이 넘치는 날: 글자 없는 색 막대 */
+.mini-bars { position: absolute; left: 3px; right: 3px; top: 31px; display: flex; flex-direction: column; gap: 2px; pointer-events: none; }
+.mini-bar { display: block; height: 5px; border-radius: 3px; background: var(--accent); opacity: .85; }
+.mini-bar.colored { background: var(--ev); }
 /* 시작·끝나는 날이 다른 일정은 날짜를 두 줄로: 칸 밖으로 넘치지 않게 */
 .event-info .tap-field .grow, .preview { white-space: pre-line; text-align: left; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
 
