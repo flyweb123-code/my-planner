@@ -4032,9 +4032,13 @@ function CalendarView(props: {
     }
   };
   const rankOf = (day: string, key: string) => dayOrder[day]?.indexOf(key) ?? -1;
+  // 달력 칸 순서: 두 일정이 함께 있는 날 중 목록에서 순서를 바꾼 날이 있으면 그 순서를 따른다 (여러 날 일정 포함)
   const orderIn = (a: DayEntry, b: DayEntry) => {
-    if (a.start === a.end && b.start === b.end && a.start === b.start) {
-      const ra = rankOf(a.start, a.key), rb = rankOf(b.start, b.key);
+    const from = a.start > b.start ? a.start : b.start;
+    const to = a.end < b.end ? a.end : b.end;
+    for (let d = from, n = 0; d <= to && n < 62; d = addDay(d, 1), n++) {
+      if (!dayOrder[d]) continue;
+      const ra = rankOf(d, a.key), rb = rankOf(d, b.key);
       if (ra >= 0 && rb >= 0) return ra - rb;
     }
     return order(a, b);
@@ -4068,7 +4072,6 @@ function CalendarView(props: {
     return { day: el.dataset.day!, index };
   };
   const startPress = (e: DayEntry, day: string, x: number, y: number) => {
-    if (mode !== "list") return;
     const li = document.elementFromPoint(x, y)?.closest<HTMLElement>(".ev");
     const t = window.setTimeout(() => {
       press.current = null;
@@ -4300,7 +4303,7 @@ function CalendarView(props: {
       onClick={() => !justDragged.current && (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}
       onTouchStart={(t) => startPress(e, day, t.touches[0].clientX, t.touches[0].clientY)}
       onMouseDown={(m) => m.button === 0 && startPress(e, day, m.clientX, m.clientY)}
-      onContextMenu={(c) => mode === "list" && c.preventDefault()}
+      onContextMenu={(c) => c.preventDefault()}
     >
       <span className="ev-bar" />
       <span className="ev-time">
@@ -4527,7 +4530,7 @@ function CalendarView(props: {
               </div>
             ))}
           </div>
-          <div className="day-panel">
+          <div className={`day-panel${drag ? " drop-on" : ""}`} data-day={selected}>
             <div className="day-head">
               <h3>{dayLabel(selected)}</h3>
               {(props.calOn || props.linked) && (
@@ -4538,7 +4541,7 @@ function CalendarView(props: {
             </div>
             {(byDay.get(selected) ?? []).length ? (
               <ul className="evlist">
-                {byDay.get(selected)!.map((e) => entry(e, selected))}
+                {withMark(selected, byDay.get(selected)!)}
               </ul>
             ) : (
               <p className="muted small">일정이 없어요.</p>
