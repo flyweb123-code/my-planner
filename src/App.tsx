@@ -954,6 +954,10 @@ export default function App() {
             setThreads((ts) => ts.filter((t) => t.id !== id));
             if (id === activeId) setActiveId(uid());
           }}
+          onSettings={() => {
+            setView({ name: "settings" });
+            setDrawer(false);
+          }}
           onClose={() => setDrawer(false)}
         />
       )}
@@ -1329,9 +1333,6 @@ function HomeChat(props: {
           <button className="icon-btn" aria-label="새 채팅" onClick={props.onNewChat} disabled={chat.length === 0 && !busy}>
             <IconCompose />
           </button>
-          <button className="icon-btn" aria-label="설정" onClick={props.onGoSettings}>
-            <IconSettings />
-          </button>
         </span>
       </header>
       {props.calExpired && (
@@ -1498,6 +1499,7 @@ function ChatDrawer(props: {
   onPick: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onSettings: () => void;
   onClose: () => void;
 }) {
   const [swiped, setSwiped] = useState<string | null>(null);
@@ -1543,6 +1545,9 @@ function ChatDrawer(props: {
             ) : null,
           )}
         </div>
+        <button className="drawer-foot" onClick={props.onSettings}>
+          <IconSettings /> 설정
+        </button>
       </aside>
     </div>
   );
@@ -2171,6 +2176,7 @@ function InlineText(props: {
     <button className={`field tap-field${multiline ? " info-desc" : ""}`} onClick={(e) => (e.stopPropagation(), setEdit(true))} aria-label={`${props.label} 수정`}>
       <span className="info-label">{props.label}</span>
       <span className={`grow ${value.trim() ? "" : "muted"}`}>{value.trim() ? value : props.empty}</span>
+      <span className="chev"><IconRight /></span>
     </button>
   );
 }
@@ -3266,7 +3272,7 @@ function EventEditor({
           </InlineTitle>
           <div className="fields event-info">
             <button className="field tap-field" onClick={(e) => (e.stopPropagation(), !readOnly && (pickTime && flush(), setPickTime(!pickTime)))} aria-label="시간 수정" aria-expanded={pickTime}>
-              <span className="sched-icon"><IconClock /></span>
+              <span className="info-label">일정</span>
               <span className="grow">{schedText(d)}</span>
               {!readOnly && <span className={`chev${pickTime ? " open" : ""}`}><IconRight /></span>}
             </button>
@@ -3388,7 +3394,7 @@ function SubtaskView(props: { item: Item; sub: Subtask; update: (fn: (it: Item) 
           </InlineTitle>
           <div className="fields event-info">
             <button className="field tap-field" onClick={(e) => (e.stopPropagation(), setPickTime(!pickTime))} aria-label="일정 수정" aria-expanded={pickTime}>
-              <span className="sched-icon"><IconClock /></span>
+              <span className="info-label">일정</span>
               <span className={`grow ${sub.due ? "" : "muted"}`}>{sub.due ? schedText(sub as Sched) : "일정 추가"}</span>
               <span className={`chev${pickTime ? " open" : ""}`}><IconRight /></span>
             </button>
