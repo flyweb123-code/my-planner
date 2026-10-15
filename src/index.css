@@ -648,3 +648,12 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 .evlist { display: grid; gap: 8px; background: none; border: 0; border-radius: 0; overflow: visible; }
 .evlist .ev { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); transition: scale .12s ease, filter .12s ease, background-color .12s ease; }
 .evlist .ev:active { scale: .97; filter: brightness(.94); background: var(--surface-2); }
+
+/* 캘린더 목록: 꾹 눌러 끌기 */
+.agenda .ev { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.ev.dragging { position: relative; z-index: 20; scale: 1.03; box-shadow: var(--shadow); pointer-events: none; transition: none; filter: none; }
+.drop-mark { height: 0; position: relative; list-style: none; }
+.drop-mark::before { content: ""; position: absolute; left: 4px; right: 4px; top: -5px; height: 3px; border-radius: 2px; background: var(--accent); }
+body.ev-drag { -webkit-user-select: none; user-select: none; }
+.day-panel.empty-day .evlist { min-height: 6px; }
+.day-panel.drop-on h3 { color: var(--accent); }

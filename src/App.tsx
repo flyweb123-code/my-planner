@@ -906,6 +906,7 @@ export default function App() {
             onAddTodo={addEventAsTodo}
             onCalendarsChanged={loadEvents}
             onEventSaved={syncTodoFromEvent}
+            onMoveTodo={(id, n) => updateItem(id, (it) => ({ ...it, due: addDay(it.due, n), endDate: it.endDate ? addDay(it.endDate, n) : it.endDate }))}
             hostFor={(ev) => eventHost(ev, ev)}
             onChat={(ev, initial) => setView({ name: "evchat", ev, initial })}
             onGoSettings={() => setView({ name: "settings" })}
@@ -1837,7 +1838,7 @@ function PullToRefresh() {
       const dy = e.touches[0].clientY - startY;
       const dx = e.touches[0].clientX - startX;
       if (vertical === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) vertical = Math.abs(dy) > Math.abs(dx);
-      if (!vertical || dy <= 0 || window.scrollY > 0) return set(0);
+      if (!vertical || dy <= 0 || window.scrollY > 0 || document.body.classList.contains("ev-drag")) return set(0);
       set(Math.min(120, dy * 0.5)); // 손가락보다 천천히 따라오게
     };
     const onEnd = () => {
@@ -3608,6 +3609,7 @@ function CalendarView(props: {
   onGoSettings: () => void;
   onCalendarsChanged: () => void;
   hostFor: (ev: CalEvent) => EventHost;
+  onMoveTodo: (itemId: string, days: number) => void;
 }) {
   const today = ymd(new Date());
   const [mode, setMode] = useState<"month" | "list">(() => {
@@ -3713,7 +3715,181 @@ function CalendarView(props: {
     const la = a.end > a.start ? 1 : 0, lb = b.end > b.start ? 1 : 0;
     return lb - la || a.start.localeCompare(b.start) || b.end.localeCompare(a.end) || (a.time || "00:00").localeCompare(b.time || "00:00");
   };
-  for (const list of byDay.values()) list.sort(order);
+  // 목록에서 꾹 눌러 끌어 바꾼 같은 날 안의 순서 (이 기기에만 저장). 달력 칸의 하루짜리 일정도 이 순서를 따른다.
+  const [dayOrder, setDayOrder] = useState<Record<string, string[]>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("evOrder") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const saveOrder = (day: string, keys: string[]) => {
+    // 지난 날 순서는 버려서 저장 크기가 계속 늘지 않게 한다
+    const next = Object.fromEntries(Object.entries({ ...dayOrder, [day]: keys }).filter(([d]) => d >= addDay(today, -31)));
+    setDayOrder(next);
+    try {
+      localStorage.setItem("evOrder", JSON.stringify(next));
+    } catch {
+      /* 무시 */
+    }
+  };
+  const rankOf = (day: string, key: string) => dayOrder[day]?.indexOf(key) ?? -1;
+  const orderIn = (a: DayEntry, b: DayEntry) => {
+    if (a.start === a.end && b.start === b.end && a.start === b.start) {
+      const ra = rankOf(a.start, a.key), rb = rankOf(b.start, b.key);
+      if (ra >= 0 && rb >= 0) return ra - rb;
+    }
+    return order(a, b);
+  };
+  for (const [d, list] of byDay) {
+    list.sort(order);
+    const custom = dayOrder[d];
+    if (!custom) continue;
+    const def = new Map(list.map((e, i) => [e.key, i]));
+    const rk = (e: DayEntry) => (custom.includes(e.key) ? custom.indexOf(e.key) : custom.length + def.get(e.key)!);
+    list.sort((a, b) => rk(a) - rk(b));
+  }
+
+  // 목록 칩을 꾹 눌러(0.45초) 위아래로 끌기: 같은 날 안이면 순서만, 다른 날에 놓으면 그만큼 날짜를 옮긴다.
+  // gy: 칩 안에서 잡은 높이, left/width: 칩 원래 가로 위치 (끄는 동안 칩은 화면에 고정해 손가락을 따라간다)
+  type Drag = { key: string; day: string; gy: number; left: number; width: number; y: number; x: number; target: { day: string; index: number } | null };
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const press = useRef<{ t: number; x: number; y: number } | null>(null);
+  const justDragged = useRef(false);
+  const byDayRef = useRef(byDay);
+  byDayRef.current = byDay;
+  const findTarget = (x: number, y: number): Drag["target"] => {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".day-panel[data-day]");
+    if (!el) return dragRef.current?.target ?? null;
+    const lis = [...el.querySelectorAll<HTMLElement>(".ev[data-key]")].filter((li) => !li.classList.contains("dragging"));
+    const index = lis.filter((li) => {
+      const r = li.getBoundingClientRect();
+      return r.top + r.height / 2 < y;
+    }).length;
+    return { day: el.dataset.day!, index };
+  };
+  const startPress = (e: DayEntry, day: string, x: number, y: number) => {
+    if (mode !== "list") return;
+    const li = document.elementFromPoint(x, y)?.closest<HTMLElement>(".ev");
+    const t = window.setTimeout(() => {
+      press.current = null;
+      if (!li) return;
+      const r = li.getBoundingClientRect();
+      keepPanel(day);
+      const d: Drag = { key: e.key, day, gy: y - r.top, left: r.left, width: r.width, y, x, target: { day, index: (byDayRef.current.get(day) ?? []).findIndex((v) => v.key === e.key) } };
+      dragRef.current = d;
+      setDrag(d);
+      document.body.classList.add("ev-drag");
+      navigator.vibrate?.(12);
+    }, 450);
+    press.current = { t, x, y };
+  };
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current.t);
+    press.current = null;
+  };
+  const dropDrag = async (d: Drag) => {
+    const t = d.target;
+    if (!t) return;
+    const list = (byDayRef.current.get(t.day) ?? []).map((v) => v.key).filter((k) => k !== d.key);
+    // 같은 날: 원래 자리보다 아래로 옮기면 빠진 칸만큼 하나 당겨진다 → filter 뒤 목록 기준이라 그대로 넣으면 된다
+    list.splice(Math.min(t.index, list.length), 0, d.key);
+    saveOrder(t.day, list);
+    if (t.day === d.day) return;
+    const en = (byDayRef.current.get(d.day) ?? []).find((v) => v.key === d.key);
+    if (!en) return;
+    const n = Math.round((new Date(t.day + "T00:00:00").getTime() - new Date(d.day + "T00:00:00").getTime()) / 86400000);
+    if (!en.ev) {
+      props.onMoveTodo(en.itemId!, n);
+      toast(`${shortDay(addDay(en.start, n))}로 옮겼어요`);
+      return;
+    }
+    const ev = en.ev;
+    if (gcal.calendarOf(ev.calendarId)?.writable === false) return toast("읽기 전용 캘린더라 날짜를 바꿀 수 없어요");
+    const edit: gcal.EventEdit = {
+      title: ev.title,
+      due: addDay(ev.date, n),
+      time: ev.time || undefined,
+      endDate: addDay(ev.endDate || ev.date, n),
+      endTime: ev.endTime || undefined,
+      location: ev.location,
+      description: ev.description,
+      colorId: ev.colorId,
+      calendarId: ev.calendarId,
+    };
+    // 화면에는 바로 옮겨 보이고, 구글 캘린더에는 뒤에서 저장
+    setShown((s) => ({ ...s, events: s.events.map((x) => (x.id === ev.id ? { ...x, date: edit.due, endDate: edit.endDate! } : x)) }));
+    try {
+      const token = props.gToken ?? gcal.savedToken() ?? (await gcal.renew());
+      if (!token) throw new Error("구글 캘린더 연결이 끝났어요. 다시 연결해 주세요.");
+      await gcal.updateEvent(token, ev.id, edit, ev.calendarId);
+      props.onEventSaved(ev, edit);
+      toast(`${shortDay(edit.due)}로 옮겼어요`);
+    } catch (err) {
+      toast(`날짜를 옮기지 못했어요: ${(err as Error).message}`);
+    }
+    load();
+  };
+  const dropRef = useRef(dropDrag);
+  dropRef.current = dropDrag;
+  useEffect(() => {
+    let raf = 0;
+    const move = (x: number, y: number, ev?: Event) => {
+      const p = press.current;
+      if (p && Math.hypot(x - p.x, y - p.y) > 8) cancelPress();
+      const d = dragRef.current;
+      if (!d) return;
+      ev?.preventDefault();
+      const next = { ...d, x, y, target: findTarget(x, y) };
+      dragRef.current = next;
+      setDrag(next);
+    };
+    const end = () => {
+      cancelPress();
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      setDrag(null);
+      document.body.classList.remove("ev-drag");
+      if (d.target) keepPanel(d.target.day);
+      justDragged.current = true;
+      setTimeout(() => (justDragged.current = false), 300);
+      void dropRef.current(d);
+    };
+    // 화면 위·아래 끝에 가까이 끌면 저절로 스크롤
+    const tick = () => {
+      const d = dragRef.current;
+      if (d) {
+        const v = d.y < 110 ? -(110 - d.y) / 5 : d.y > window.innerHeight - 150 ? (d.y - (window.innerHeight - 150)) / 5 : 0;
+        if (v) {
+          window.scrollBy(0, v);
+          const next = { ...d, target: findTarget(d.x, d.y) };
+          dragRef.current = next;
+          setDrag(next);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    const tm = (e: TouchEvent) => move(e.touches[0].clientX, e.touches[0].clientY, e);
+    const mm = (e: MouseEvent) => move(e.clientX, e.clientY, e);
+    document.addEventListener("touchmove", tm, { passive: false });
+    document.addEventListener("touchend", end);
+    document.addEventListener("touchcancel", end);
+    document.addEventListener("mousemove", mm);
+    document.addEventListener("mouseup", end);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("touchmove", tm);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("touchcancel", end);
+      document.removeEventListener("mousemove", mm);
+      document.removeEventListener("mouseup", end);
+      document.body.classList.remove("ev-drag");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [slide, setSlide] = useState<"" | "next" | "prev">("");
   const shift = (n: number) => {
@@ -3763,7 +3939,7 @@ function CalendarView(props: {
   for (let w = 0; w < cells.length / 7; w++) {
     const days = cells.slice(w * 7, w * 7 + 7).map(ymd);
     const first = days[0], last = days[6];
-    const inWeek = entries.filter((e) => e.start <= last && e.end >= first).sort(order);
+    const inWeek = entries.filter((e) => e.start <= last && e.end >= first).sort(orderIn);
     const used: boolean[][] = [];
     const bars: (typeof weekBars)[number] = [];
     for (const e of inWeek) {
@@ -3791,8 +3967,21 @@ function CalendarView(props: {
     return d === today ? `오늘 · ${label}` : d === tomorrow ? `내일 · ${label}` : label;
   };
 
-  const Entry = ({ e }: { e: DayEntry }) => (
-    <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}>
+  // 컴포넌트가 아니라 함수로 그린다: 그릴 때마다 새 컴포넌트가 되면 칩이 다시 만들어져 끄는 중 손가락 이벤트가 끊긴다
+  const entry = (e: DayEntry, day: string) => {
+    const dragging = drag && drag.key === e.key && drag.day === day;
+    const style = { ...evColor(e), ...(dragging ? { position: "fixed" as const, top: drag.y - drag.gy, left: drag.left, width: drag.width } : {}) };
+    return (
+    <li
+      key={e.key}
+      data-key={e.key}
+      className={`ev ${e.kind}${e.color ? " colored" : ""}${dragging ? " dragging" : ""}`}
+      style={style}
+      onClick={() => !justDragged.current && (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}
+      onTouchStart={(t) => startPress(e, day, t.touches[0].clientX, t.touches[0].clientY)}
+      onMouseDown={(m) => m.button === 0 && startPress(e, day, m.clientX, m.clientY)}
+      onContextMenu={(c) => mode === "list" && c.preventDefault()}
+    >
       <span className="ev-bar" />
       <span className="ev-time">
         {e.end > e.start ? (
@@ -3812,7 +4001,38 @@ function CalendarView(props: {
         {e.title}
       </span>
     </li>
-  );
+    );
+  };
+  // 끄는 동안에는 일정 없는 날도 보여서 그날로 옮길 수 있게 한다
+  const agendaDays = () => {
+    const out: string[] = [];
+    for (let d = today; d < ymd(rangeTo) && out.length < 62; d = addDay(d, 1)) out.push(d);
+    return out;
+  };
+  // 끌기 시작·끝에 빈 날이 생기거나 사라져 목록이 밀려도, 그날 묶음이 화면에서 같은 높이에 있게 스크롤을 맞춘다
+  const anchor = useRef<{ day: string; top: number } | null>(null);
+  const keepPanel = (day: string) => {
+    const el = document.querySelector<HTMLElement>(`.day-panel[data-day="${day}"]`);
+    anchor.current = el ? { day, top: el.getBoundingClientRect().top } : null;
+  };
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a) return;
+    anchor.current = null;
+    const el = document.querySelector<HTMLElement>(`.day-panel[data-day="${a.day}"]`);
+    if (el) window.scrollBy(0, el.getBoundingClientRect().top - a.top);
+  });
+  // 끄는 중에 놓일 자리 표시선
+  const withMark = (day: string, list: DayEntry[]) => {
+    const t = drag?.target;
+    const items = list.map((e) => entry(e, day));
+    if (!t || t.day !== day) return items;
+    // index는 끄는 칩을 뺀 목록 기준 → 화면 목록(끄는 칩 포함)에서의 자리로 바꾼다
+    const self = drag.day === day ? list.findIndex((e) => e.key === drag.key) : -1;
+    const at = self >= 0 && t.index >= self ? t.index + 1 : t.index;
+    items.splice(at, 0, <li key="__mark" className="drop-mark" aria-hidden="true" />);
+    return items;
+  };
 
   if (creating)
     return (
@@ -3991,9 +4211,7 @@ function CalendarView(props: {
             </div>
             {(byDay.get(selected) ?? []).length ? (
               <ul className="evlist">
-                {byDay.get(selected)!.map((e) => (
-                  <Entry key={e.key} e={e} />
-                ))}
+                {byDay.get(selected)!.map((e) => entry(e, selected))}
               </ul>
             ) : (
               <p className="muted small">일정이 없어요.</p>
@@ -4002,7 +4220,7 @@ function CalendarView(props: {
         </>
       ) : (
         <div className="agenda">
-          {[...byDay.entries()]
+          {(drag ? agendaDays().map((d) => [d, byDay.get(d) ?? []] as [string, DayEntry[]]) : [...byDay.entries()])
             .filter(([d]) => d >= today && d < ymd(rangeTo))
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([d, list], i, all) => {
@@ -4017,13 +4235,9 @@ function CalendarView(props: {
               return (
               <Fragment key={d}>
               {(i === 0 || week(all[i - 1][0]) !== g) && <div className="week-divider"><span>{g}</span></div>}
-              <div className="day-panel">
+              <div className={`day-panel${list.length ? "" : " empty-day"}${drag?.target?.day === d ? " drop-on" : ""}`} data-day={d}>
                 <h3 className={d === today ? "is-today" : ""}>{dayLabel(d)}</h3>
-                <ul className="evlist">
-                  {list.map((e) => (
-                    <Entry key={e.key} e={e} />
-                  ))}
-                </ul>
+                <ul className="evlist">{withMark(d, list)}</ul>
               </div>
               </Fragment>
               );
