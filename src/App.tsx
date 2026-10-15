@@ -1388,7 +1388,6 @@ function HomeChat(props: {
                       <span className="grow">
                         {a.text}
                       </span>
-                      {actTarget(a) && <span className="chev"><IconRight /></span>}
                       {a.undo && !a.undone && (
                         <button className="link small" onClick={(e) => (e.stopPropagation(), undo(i, j))}>
                           되돌리기
