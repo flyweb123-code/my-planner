@@ -607,3 +607,9 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 .bline .grow, .blist .grow { flex: 1; min-width: 0; }
 .bline .chev, .blist .chev { color: var(--faint); display: inline-flex; flex: none; }
 .bline .chev svg, .blist .chev svg { width: 16px; height: 16px; }
+.now-line { display: flex; align-items: center; gap: 12px; }
+.now-line .now-body { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.now-line .chev { color: var(--accent); opacity: .7; display: inline-flex; flex: none; }
+.now-line .chev svg { width: 18px; height: 18px; }
+.act .chev { display: inline-flex; }
+.act .chev svg { width: 16px; height: 16px; }

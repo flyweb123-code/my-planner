@@ -1278,8 +1278,11 @@ function HomeChat(props: {
       {(
         <>
           <button className="now-line" onClick={() => tapBrief(brief.now)}>
-            <span className="label">지금</span>
-            <span>{brief.now.text}</span>
+            <span className="grow now-body">
+              <span className="label">지금</span>
+              <span>{brief.now.text}</span>
+            </span>
+            <span className="chev"><IconRight /></span>
           </button>
           {brief.missed.length > 0 && (
             <div className="bgroup">
@@ -1375,7 +1378,7 @@ function HomeChat(props: {
                       <span className="grow">
                         {a.text}
                       </span>
-                      {actTarget(a) && <span className="chev">›</span>}
+                      {actTarget(a) && <span className="chev"><IconRight /></span>}
                       {a.undo && !a.undone && (
                         <button className="link small" onClick={(e) => (e.stopPropagation(), undo(i, j))}>
                           되돌리기
