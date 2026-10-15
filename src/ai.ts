@@ -533,7 +533,7 @@ const BRIEF_MODEL = "claude-haiku-5-5";
 export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[]): Promise<Briefing> {
   const open = items.filter((i) => !i.done);
   const itemsText =
-    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 6, maxLen: 200 })}\n마지막 수정: ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
+    open.map((i) => `[id=${i.id}] ${describeItem(i, { perChat: 6, maxLen: 200 })}\n마지막 수정(마감 아님): ${new Date(i.updatedAt).toLocaleDateString("ko-KR")}`).join("\n\n") || "(없음)";
   const evText = eventsText(events, 40, true, true);
   const res = await client(s).messages.parse({
     // 첫 화면 브리핑은 자주 만들어지고 짧은 정리라서 빠르고 저렴한 모델로 만든다
@@ -549,11 +549,26 @@ export async function makeBriefing(s: Settings, items: Item[], events: CalEvent[
       "할 일과 일정 안의 세부 업무도 하나하나 본다: 끝낸 것([x])과 남은 것, 세부 업무 메모, 할 일·세부 업무·일정에서 나눈 대화 기록을 모두 읽고, " +
       "대화에서 정한 것이나 하기로 한 것을 반영해 '다음에 할 세부 업무'를 구체적으로 짚는다(예: '드레스 투어 전에 원하는 스타일 사진 정리하기'). 이미 끝낸 세부 업무는 다시 권하지 않는다. " +
       "각 줄이 어떤 할 일이나 일정에 관한 것인지 꼭 이어 준다: 할 일이면 item_id에 그 id를, 캘린더 일정이면 event_id에 그 일정의 event_id를 넣는다(둘 다 해당하면 둘 다). 사용자가 줄을 누르면 그 화면이 열린다. " +
+      "놓친 것은 할 일의 '일정' 날짜나 안 끝낸 세부 업무 날짜가 이미 지난 것만이다. '마지막 수정' 날짜는 마감이 아니니 놓친 것의 근거로 쓰지 않는다. " +
       "할 일과 캘린더 일정이 모두 없으면 now에 할 일을 말해 달라는 안내를 넣고 나머지는 비운다.",
     messages: [{ role: "user", content: `지금: ${fmtNow()}\n\n## 할 일 목록\n${itemsText}\n\n## 앞으로의 구글 캘린더 일정\n${evText}` }],
   });
   if (!res.parsed_output) throw new Error("제안을 만들지 못했어요.");
-  return res.parsed_output;
+  return { ...res.parsed_output, missed: realMissed(res.parsed_output.missed, open) };
+}
+
+// '놓친 것'은 실제로 지난 날짜만: 이어진 할 일의 날짜나 안 끝낸 세부 업무 날짜 중 오늘까지인 것과 맞아야 한다.
+// (모델이 '마지막 수정' 날짜 같은 엉뚱한 날을 붙여 마감이 한참 남은 일을 놓쳤다고 하는 걸 막는다)
+function realMissed(missed: Briefing["missed"], open: Item[]): Briefing["missed"] {
+  const today = new Date().toLocaleDateString("sv-SE");
+  return missed.filter((m) => {
+    if (!m.date || m.date > today) return false;
+    if (!m.item_id) return true;
+    const it = open.find((i) => i.id === m.item_id);
+    if (!it) return false;
+    const past = [it.due, ...it.subtasks.filter((x) => !x.done).map((x) => x.due)].filter((d): d is string => !!d && d <= today);
+    return past.includes(m.date);
+  });
 }
 
 // API 키가 없거나 실패했을 때 쓰는 간단한 규칙 기반 제안

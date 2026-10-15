@@ -1034,13 +1034,14 @@ const relinked = new Set<string>();
 
 // 마지막 브리핑. 앱을 다시 열면 이걸 바로 보여 주고 뒤에서 새로 만든다 (기다리는 화면 없이).
 type BriefCache = { at: number; brief: Briefing; evKey: string; v?: number };
-const BRIEF_V = 2; // 브리핑 모양(문장 길이 등)을 바꾸면 올린다 → 예전 브리핑은 보여 주되 바로 새로 만든다
+const BRIEF_V = 3; // 브리핑 모양(문장 길이 등)을 바꾸면 올린다 → 예전 브리핑은 보여 주되 바로 새로 만든다
 let briefCache: BriefCache | null = (() => {
   try {
     const c = JSON.parse(localStorage.getItem("briefCache") ?? "null") as BriefCache | null;
     // 다른 날 만든 브리핑은 '지금'이 틀릴 수 있어서 쓰지 않는다
     if (!c || new Date(c.at).toDateString() !== new Date().toDateString()) return null;
-    return c.v === BRIEF_V ? c : { ...c, at: 0 };
+    // 예전 판의 '놓친 것'은 틀린 날짜가 섞였을 수 있어서 새로 만들 때까지 비워 둔다
+    return c.v === BRIEF_V ? c : { ...c, at: 0, brief: { ...c.brief, missed: [] } };
   } catch {
     return null;
   }
