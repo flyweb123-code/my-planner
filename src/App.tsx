@@ -3791,13 +3791,13 @@ function CalendarView(props: {
     return d === today ? `오늘 · ${label}` : d === tomorrow ? `내일 · ${label}` : label;
   };
 
-  const Entry = ({ e, day }: { e: DayEntry; day: string }) => (
+  const Entry = ({ e }: { e: DayEntry }) => (
     <li className={`ev ${e.kind}${e.color ? " colored" : ""}`} style={evColor(e)} onClick={() => (e.ev ? setEditing(e.ev) : e.itemId && props.onOpen(e.itemId))}>
       <span className="ev-bar" />
       <span className="ev-time">
         {e.end > e.start ? (
           <>
-            {e.time ? (day === e.start ? e.time : "계속") : "종일"}
+            {shortDay(e.start)}
             <small>~{shortDay(e.end)}</small>
           </>
         ) : (
@@ -3992,7 +3992,7 @@ function CalendarView(props: {
             {(byDay.get(selected) ?? []).length ? (
               <ul className="evlist">
                 {byDay.get(selected)!.map((e) => (
-                  <Entry key={e.key} e={e} day={selected} />
+                  <Entry key={e.key} e={e} />
                 ))}
               </ul>
             ) : (
@@ -4021,7 +4021,7 @@ function CalendarView(props: {
                 <h3 className={d === today ? "is-today" : ""}>{dayLabel(d)}</h3>
                 <ul className="evlist">
                   {list.map((e) => (
-                    <Entry key={e.key} e={e} day={d} />
+                    <Entry key={e.key} e={e} />
                   ))}
                 </ul>
               </div>
