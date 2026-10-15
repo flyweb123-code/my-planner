@@ -111,6 +111,8 @@ input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: va
 .bar div { height: 100%; background: var(--accent); border-radius: 2px; }
 .due { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-2); padding: 4px 8px; border-radius: 999px; white-space: nowrap; }
 .due.soon { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.due-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; flex-shrink: 0; }
+.due-date { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 /* ---------- 할 일 상세 ---------- */
 .title-input { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; border: 0; background: transparent; padding: 4px 0; border-radius: 0; }

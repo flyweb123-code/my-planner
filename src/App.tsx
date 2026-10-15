@@ -1541,7 +1541,12 @@ function ItemRow(props: {
           </div>
         )}
       </div>
-      {it.due && <span className={`due ${n !== null && n <= 1 && !it.done ? "soon" : ""}`}>{dueLabel(it.due)}</span>}
+      {it.due && (
+        <span className="due-wrap">
+          <span className={`due ${n !== null && n <= 1 && !it.done ? "soon" : ""}`}>{dueLabel(it.due)}</span>
+          <span className="due-date">{dueDay(it.due)}</span>
+        </span>
+      )}
       {!it.done && (
         <button
           className={`pin-btn ${it.pinned ? "on" : ""}`}
@@ -1721,6 +1726,11 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
 /* ---------------- 일정: 구글 캘린더 일정 편집 화면과 같은 모양 ---------------- */
 
 const fmtDay = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" }).replace(/\((.)\)/, "($1)");
+// 할 일 카드의 마감일: "10/18 (토)"
+const dueDay = (d: string) => {
+  const x = new Date(d + "T00:00:00");
+  return `${x.getMonth() + 1}/${x.getDate()} (${"일월화수목금토"[x.getDay()]})`;
+};
 const fmtTime = (t: string) => new Date(`2000-01-01T${t}:00`).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
 const today = () => new Date().toLocaleDateString("sv-SE");
 // 일정 화면에서 보여 주는 날짜·시간 한 줄
