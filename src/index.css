@@ -643,3 +643,8 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 .title-view { line-height: 1.5; }
 /* 눌러서 고치는 줄(버튼)도 줄 사이 구분선이 늘 보이게. 고치는 중에도 위아래 선이 그대로 */
 .event-info .field + .field, .event-info .field + .inline-sched, .event-info .inline-sched + .field { border-top: 1px solid var(--line); }
+
+/* 캘린더 목록: 일정마다 따로 떨어진 칩, 칩마다 누르는 느낌 */
+.evlist { display: grid; gap: 8px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.evlist .ev { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); transition: scale .12s ease, filter .12s ease, background-color .12s ease; }
+.evlist .ev:active { scale: .97; filter: brightness(.94); background: var(--surface-2); }
