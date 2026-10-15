@@ -583,3 +583,6 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 .cell .more-dot { position: absolute; top: 13px; right: 6px; margin: 0; }
 /* 시작·끝나는 날이 다른 일정은 날짜를 두 줄로: 칸 밖으로 넘치지 않게 */
 .event-info .tap-field .grow, .preview { white-space: pre-line; text-align: left; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+
+/* 할 일 화면 메모: 누르면 그 자리에서 고치기 */
+.memo-card .memo-edit textarea { border: 0; background: none; padding: 0; margin: 0; min-height: 22px; resize: none; overflow: hidden; font: inherit; line-height: 1.5; color: var(--text); outline: none; box-shadow: none; }

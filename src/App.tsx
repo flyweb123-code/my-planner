@@ -1906,11 +1906,10 @@ function ItemView(props: {
               </a>
             </div>
           )}
-          <div className="field memo">
-            <textarea placeholder="메모 (클론도 같이 봐요)" value={item.note} onChange={(e) => update((it) => ({ ...it, note: e.target.value }))} />
-          </div>
         </div>
       )}
+
+      <MemoField value={item.note} onChange={(note) => update((it) => ({ ...it, note }))} />
 
       {editing && (
         <EditPanel onDone={() => setEditing(false)}>
@@ -1952,6 +1951,39 @@ function ItemView(props: {
 
       <SubtaskSection item={item} update={update} onOpenSub={props.onOpenSub} />
     </section>
+  );
+}
+
+/* 할 일 화면의 메모: 평소엔 읽기만, 누르면 그 자리에서 바로 고친다. 다른 곳을 누르면 끝. */
+function MemoField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [edit, setEdit] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const t = ref.current;
+    if (!edit || !t) return;
+    t.focus();
+    t.setSelectionRange(t.value.length, t.value.length);
+  }, [edit]);
+  useEffect(() => {
+    const t = ref.current;
+    if (!t) return;
+    t.style.height = "auto";
+    t.style.height = `${t.scrollHeight}px`;
+  }, [edit, value]);
+  return (
+    <div className="fields event-info memo-card">
+      {edit ? (
+        <div className="field info-desc memo-edit">
+          <span className="info-label">메모</span>
+          <textarea ref={ref} className="grow" placeholder="메모 (클론도 같이 봐요)" value={value} onChange={(e) => onChange(e.target.value)} onBlur={() => setEdit(false)} />
+        </div>
+      ) : (
+        <button className="field tap-field info-desc" onClick={() => setEdit(true)} aria-label="메모 수정">
+          <span className="info-label">메모</span>
+          <span className={`grow ${value.trim() ? "" : "muted"}`}>{value.trim() ? value : "메모 추가"}</span>
+        </button>
+      )}
+    </div>
   );
 }
 
