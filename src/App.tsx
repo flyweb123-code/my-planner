@@ -2165,7 +2165,7 @@ function InlineText(props: {
       <div className={`field memo-edit${multiline ? " info-desc" : ""}`} onClick={(e) => e.stopPropagation()}>
         <span className="info-label">{props.label}</span>
         {multiline ? (
-          <textarea ref={ref} className="grow" placeholder={props.placeholder} value={value} onChange={(e) => props.onChange(e.target.value)} onBlur={finish} />
+          <textarea ref={ref} rows={1} className="grow" placeholder={props.placeholder} value={value} onChange={(e) => props.onChange(e.target.value)} onBlur={finish} />
         ) : (
           <input
             ref={ref}
@@ -2177,6 +2177,7 @@ function InlineText(props: {
             onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
           />
         )}
+        <span className="chev ghost-chev" aria-hidden="true"><IconRight /></span>
       </div>
     );
   if (props.readOnly)
@@ -2201,7 +2202,7 @@ function InlineTitle(props: { value: string; onChange: (v: string) => void; onDo
   if (edit)
     return (
       <input
-        className="title-input"
+        className="title-input title-edit"
         autoFocus
         placeholder={props.placeholder}
         value={props.value}

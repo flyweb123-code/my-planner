@@ -600,7 +600,7 @@ main.swiping { position: relative; z-index: 1; background: var(--bg); margin: 0 
 
 /* 채팅 목록 서랍 맨 아래 설정 */
 .drawer-foot { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; color: var(--text); padding: 14px 10px 4px; margin-top: 8px; font-size: 15px; text-align: left; cursor: pointer; }
-.drawer-foot svg { width: 20px; height: 20px; color: var(--muted); }
+.drawer-foot svg { width: 22px; height: 22px; color: var(--text); }
 
 /* 브리핑(놓친 것·확인할 것) 줄 오른쪽 > : 누르면 그 항목으로 간다 */
 .bline { display: flex; align-items: center; gap: 12px; width: 100%; }
@@ -632,3 +632,14 @@ button:not(:disabled):active, .filebtn:active, a:active, .act.tappable:active { 
 /* 브리핑 날짜 칩 폭을 고정해서 '오늘'·'10/14' 어느 쪽이든 글자가 같은 자리에서 시작 */
 .date-chip { width: 52px; padding-left: 0; padding-right: 0; text-align: center; box-sizing: border-box; }
 .date-chip.spacer { visibility: hidden; }
+
+/* 메모·위치를 눌러 고칠 때 보던 화면과 글자 크기·줄 간격·폭이 똑같도록 (보기: 15px, 줄 간격 1.45, 오른쪽 >) */
+.event-info .memo-edit textarea, .event-info .memo-edit input { font-size: 15px; line-height: 1.45; flex: 1; min-width: 0; width: auto; }
+.event-info .memo-edit .ghost-chev { visibility: hidden; display: inline-flex; flex: none; margin-left: auto; }
+.event-info .memo-edit .ghost-chev svg { width: 16px; height: 16px; }
+.event-info .info-desc .grow { line-height: 1.45; }
+/* 큰 제목을 눌러 고칠 때도 보던 제목과 같은 자리·높이 */
+.title-input.title-edit { display: block; margin: 4px 0 12px; padding: 0; line-height: 1.5; height: auto; min-height: 0; outline: none; box-shadow: none; }
+.title-view { line-height: 1.5; }
+/* 눌러서 고치는 줄(버튼)도 줄 사이 구분선이 늘 보이게. 고치는 중에도 위아래 선이 그대로 */
+.event-info .field + .field, .event-info .field + .inline-sched, .event-info .inline-sched + .field { border-top: 1px solid var(--line); }
