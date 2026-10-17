@@ -571,6 +571,23 @@ function realMissed(missed: Briefing["missed"], open: Item[]): Briefing["missed"
   });
 }
 
+// 저장해 둔 브리핑은 몇 분 늦게 다시 만들어지니, 보여 줄 때마다 지금 할 일 목록에 맞춰 거른다.
+// 완료했거나 지운 할 일(그 할 일과 이어진 캘린더 일정 포함)은 바로 빠진다.
+export function liveBrief(b: Briefing, items: Item[], events: CalEvent[]): Briefing {
+  const open = items.filter((i) => !i.done);
+  const doneLine = (m: { item_id: string; event_id: string }) => {
+    if (m.item_id && !open.some((i) => i.id === m.item_id)) return true;
+    if (!m.event_id) return false;
+    const linked = events.find((e) => e.id === m.event_id)?.itemId ?? items.find((i) => i.calendarEventId === m.event_id)?.id;
+    return !!linked && items.some((i) => i.id === linked && i.done);
+  };
+  return {
+    now: doneLine(b.now) ? simpleBriefing(items, events).now : b.now,
+    missed: realMissed(b.missed, open).filter((m) => !doneLine(m)),
+    check: b.check.filter((m) => !doneLine(m)),
+  };
+}
+
 // API 키가 없거나 실패했을 때 쓰는 간단한 규칙 기반 제안
 export function simpleBriefing(items: Item[], events: CalEvent[] = []): Briefing {
   const open = items.filter((i) => !i.done);

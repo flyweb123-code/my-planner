@@ -5,7 +5,7 @@ import * as backup from "./backup";
 import * as alerts from "./alerts";
 import type { Alert } from "./alerts";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
-import { type World, checkKey, greeting, homeChat, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
+import { type World, checkKey, greeting, homeChat, liveBrief, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
@@ -1313,18 +1313,22 @@ function HomeChat(props: {
   });
   const snoozeKey = (m: { text: string; item_id: string; event_id?: string }) => m.item_id || m.event_id || m.text;
   // 삭제: 이 '확인할 것'을 다시 안 띄운다 (할 일·일정 자체는 지우지 않음). 1년 숨김으로 처리
-  const hide = (m: { text: string; item_id: string; event_id?: string }, forever = false) => {
-    const next = { ...snooze, [snoozeKey(m)]: Date.now() + (forever ? 365 * 86400000 : 6 * 3600000) };
+  // '놓친 것'도 같은 방식으로 숨기되, 같은 할 일의 '확인할 것'까지 숨지 않게 키를 따로 쓴다
+  const missedKey = (m: { text: string; item_id: string; event_id?: string }) => "missed:" + snoozeKey(m);
+  const hide = (m: { text: string; item_id: string; event_id?: string }, forever = false, missed = false) => {
+    const next = { ...snooze, [missed ? missedKey(m) : snoozeKey(m)]: Date.now() + (forever ? 365 * 86400000 : 6 * 3600000) };
     setSnooze(next);
     try {
       localStorage.setItem("briefSnooze", JSON.stringify(next));
     } catch {
       /* 무시 */
     }
-    toast(forever ? "확인할 것에서 지웠어요" : "6시간 동안 숨겼어요");
+    toast(forever ? `${missed ? "놓친 것" : "확인할 것"}에서 지웠어요` : "6시간 동안 숨겼어요");
   };
   const [swipedBrief, setSwipedBrief] = useState<string | null>(null);
-  const checks = brief ? brief.check.filter((m) => !(snooze[snoozeKey(m)] > Date.now())) : [];
+  const live = liveBrief(brief, items, events);
+  const checks = live.check.filter((m) => !(snooze[snoozeKey(m)] > Date.now()));
+  const missed = live.missed.filter((m) => !(snooze[missedKey(m)] > Date.now()));
 
   const briefing = (
     <div className="msg assistant brief">
@@ -1346,22 +1350,35 @@ function HomeChat(props: {
               ))}
             </div>
           )}
-          <button className="now-line" onClick={() => tapBrief(brief.now)}>
+          <button className="now-line" onClick={() => tapBrief(live.now)}>
             <span className="grow now-body">
               <span className="label">지금</span>
-              <span>{brief.now.text}</span>
+              <span>{live.now.text}</span>
             </span>
             <span className="chev"><IconRight /></span>
           </button>
-          {brief.missed.length > 0 && (
+          {missed.length > 0 && (
             <div className="bgroup">
-              <p className="label warn">놓친 것</p>
-              {brief.missed.map((m, i) => (
-                <button key={i} className="bline" onClick={() => tapBrief(m)}>
-                  <BriefText m={m} pad={brief.missed.some((x) => briefDate(x).date)} />
-                  <span className="chev"><IconRight /></span>
-                </button>
-              ))}
+              <p className="label warn">
+                놓친 것 <span className="label-hint">왼쪽으로 밀면 숨기거나 지워요</span>
+              </p>
+              <ul className="blist">
+                {missed.map((m, i) => (
+                  <SwipeRow
+                    key={`m${i}-${m.text}`}
+                    open={swipedBrief === `m${i}-${m.text}`}
+                    onOpenChange={(o) => setSwipedBrief(o ? `m${i}-${m.text}` : null)}
+                    onTap={() => tapBrief(m)}
+                    actions={[
+                      { label: "나중에", cls: "later", run: () => hide(m, false, true) },
+                      { label: "삭제", cls: "danger", run: () => hide(m, true, true) },
+                    ]}
+                  >
+                    <BriefText m={m} pad={missed.some((x) => briefDate(x).date)} />
+                    <span className="chev"><IconRight /></span>
+                  </SwipeRow>
+                ))}
+              </ul>
             </div>
           )}
           {checks.length > 0 && (
