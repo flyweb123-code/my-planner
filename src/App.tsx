@@ -3225,6 +3225,7 @@ function WidgetSettings({ items, onGoCalendar }: { items: Item[]; onGoCalendar: 
           <button onClick={copy}>위젯 코드 복사</button>
           {copied === "ok" && <p className="check ok">복사했어요. Scriptable에 붙여 넣어 주세요.</p>}
           {copied === "show" && <textarea className="code" readOnly value={widget.scriptableCode()} onFocus={(e) => e.currentTarget.select()} />}
+          <p className="muted small">고정한 할 일이 없으면 위젯은 아무것도 보이지 않는 빈칸이 돼요. (아이폰은 위젯 칸 자체를 저절로 없애 주지는 않아요.)</p>
           <p className="muted small">잠금 화면 위젯은 아이폰이 정한 때에 새로 고쳐져서, 고정을 바꾸고 위젯에 반영되기까지 몇 분에서 길게는 십여 분 걸릴 수 있어요. 위젯 코드에는 내 목록을 여는 비밀 주소가 들어 있으니 다른 사람에게 보내지 마세요.</p>
         </>
       )}

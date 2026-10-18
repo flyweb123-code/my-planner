@@ -80,8 +80,11 @@ const w = new ListWidget();
 w.url = APP;
 w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
 
-if (fam === "accessoryInline") {
-  w.addText(items.length ? "📌 " + items[0].t + (items.length > 1 ? " 외 " + (items.length - 1) + "개" : "") : "고정한 할 일 없음");
+// 고정한 할 일이 없으면 아무것도 그리지 않는다(iOS는 위젯 칸 자체를 없앨 수는 없어서 빈칸으로 둔다).
+if (!items.length) {
+  if (!fam.startsWith("accessory")) w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
+} else if (fam === "accessoryInline") {
+  w.addText("📌 " + items[0].t + (items.length > 1 ? " 외 " + (items.length - 1) + "개" : ""));
 } else if (fam === "accessoryCircular") {
   w.addAccessoryWidgetBackground = true;
   const n = w.addText(String(items.length));
@@ -92,7 +95,6 @@ if (fam === "accessoryInline") {
   l.centerAlignText();
 } else if (fam.startsWith("accessory")) {
   // 잠금 화면 칸은 크기가 정해져 있어서, 개수가 적을수록 한 할 일에 줄을 더 준다.
-  if (!items.length) w.addText("고정한 할 일 없음").font = Font.systemFont(13);
   const shown = items.length > 3 ? items.slice(0, 2) : items;
   const lines = shown.length === 1 ? 4 : shown.length === 2 ? 2 : 1;
   for (const it of shown) {
@@ -111,7 +113,6 @@ if (fam === "accessoryInline") {
   h.font = Font.boldSystemFont(13);
   h.textColor = new Color("#3b6cf6");
   w.addSpacer(6);
-  if (!items.length) w.addText("없음").font = Font.systemFont(13);
   const max = fam === "large" ? 10 : 5;
   for (const it of items.slice(0, max)) {
     const t = w.addText("• " + it.t + (it.d ? "  " + it.d : ""));
