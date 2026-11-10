@@ -5,7 +5,7 @@ import * as backup from "./backup";
 import * as alerts from "./alerts";
 import type { Alert } from "./alerts";
 import type { Action, Item, Msg, Settings, Subtask } from "./store";
-import { type World, checkKey, greeting, homeChat, liveBrief, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
+import { type World, aiErrorText, checkKey, greeting, homeChat, liveBrief, makeBriefing, simpleBriefing, streamChat, summarizeTitle } from "./ai";
 import type { Briefing, ToolRunner } from "./ai";
 import { Markdown } from "./md";
 import * as gcal from "./gcal";
@@ -1243,7 +1243,7 @@ function HomeChat(props: {
       if (r.actions.length && briefCache) briefCache = { ...briefCache, at: 0 };
       setChat((c) => [...c, { role: "assistant", text: r.text, ts: Date.now(), actions: r.actions.length ? r.actions : undefined }]);
     } catch (e) {
-      setChat((c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]);
+      setChat((c) => [...c, { role: "assistant", text: `⚠️ ${aiErrorText(e)}`, ts: Date.now() }]);
     } finally {
       setStreaming("");
       setBusy(false);
@@ -2622,7 +2622,7 @@ function ChatView(props: {
         setChat(it, (c) => [...c, { role: "assistant", text: r.text + saved, ts: Date.now(), suggestions: r.suggestions.length ? r.suggestions : undefined }]),
       );
     } catch (e) {
-      update((it) => setChat(it, (c) => [...c, { role: "assistant", text: `⚠️ ${(e as Error).message}`, ts: Date.now() }]));
+      update((it) => setChat(it, (c) => [...c, { role: "assistant", text: `⚠️ ${aiErrorText(e)}`, ts: Date.now() }]));
     } finally {
       setStreaming("");
       setBusy(false);
@@ -2852,7 +2852,7 @@ function ClaudeSettings({ settings, setSettings }: { settings: Settings; setSett
       const name = await checkKey(s);
       setCheck({ state: "ok", text: `클론과 연결됐어요 (${name})` });
     } catch (e) {
-      const msg = (e as { status?: number }).status === 401 ? "키가 올바르지 않아요. 다시 복사해 넣어 주세요." : (e as Error).message;
+      const msg = (e as { status?: number }).status === 401 ? "키가 올바르지 않아요. 다시 복사해 넣어 주세요." : aiErrorText(e);
       setCheck({ state: "fail", text: msg });
     }
   };

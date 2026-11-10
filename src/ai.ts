@@ -10,6 +10,22 @@ function client(s: Settings) {
   return new Anthropic({ apiKey: s.apiKey, dangerouslyAllowBrowser: true });
 }
 
+// 클론 대화에서 오류를 날것의 JSON 대신 알아듣기 쉬운 말로 보여 준다.
+export function aiErrorText(e: unknown): string {
+  const err = e as { status?: number; message?: string; name?: string };
+  const raw = String(err?.message ?? e ?? "");
+  const st = err?.status;
+  if (st === 401) return "API 키가 맞지 않아요. 키가 지워졌거나 잘못 들어간 것 같아요. 설정(왼쪽 ☰ → 맨 아래 톱니바퀴)에서 새 키를 넣어 주세요.";
+  if (st === 403) return "이 API 키로는 쓸 수 없는 기능이에요. 설정에서 키를 확인해 주세요.";
+  if (/credit balance/i.test(raw)) return "Anthropic 크레딧이 다 떨어졌어요. console.anthropic.com의 Billing에서 충전해 주세요.";
+  if (st === 404) return "고른 모델을 찾지 못했어요. 설정에서 다른 모델을 골라 주세요.";
+  if (st === 429) return "잠깐 너무 많이 보냈어요. 1분쯤 뒤에 다시 보내 주세요.";
+  if (st === 529 || /overloaded/i.test(raw)) return "지금 Claude 서버가 붐벼요. 잠시 뒤에 다시 보내 주세요.";
+  if (st && st >= 500) return "Claude 서버에 잠깐 문제가 있어요. 잠시 뒤에 다시 보내 주세요.";
+  if (err?.name === "APIConnectionError" || /fetch|network|connection/i.test(raw)) return "인터넷 연결을 확인하고 다시 보내 주세요.";
+  return raw || "문제가 생겼어요. 다시 보내 주세요.";
+}
+
 const fmtNow = () =>
   new Date().toLocaleString("ko-KR", { dateStyle: "full", timeStyle: "short" });
 
